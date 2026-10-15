@@ -1,0 +1,12 @@
+{
+  "name": "hra-multiplayer",
+  "version": "1.0.0",
+  "description": "Jednoduchá 2D pixel hra s LAN multiplayerem",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hra Multiplayer</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1b2a; font-family: monospace; }
+    canvas { display: block; image-rendering: pixelated; }
+    #join {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(10, 10, 20, 0.75);
+    }
+    #join form {
+      background: #2a2a40; border: 4px solid #000; box-shadow: 6px 6px 0 #000;
+      padding: 24px; color: #fff; text-align: center; width: min(320px, 85vw);
+    }
+    #join h1 { margin: 0 0 16px; font-size: 22px; }
+    #join input, #join button {
+      font: inherit; font-size: 18px; padding: 8px; width: 100%; box-sizing: border-box;
+      border: 3px solid #000; margin-top: 8px;
+    }
+    #join button { background: #2ecc71; cursor: pointer; font-weight: bold; }
+    #join button:hover { background: #3ee681; }
+    #hud {
+      position: fixed; top: 8px; left: 8px; color: #fff; font-size: 14px;
+      background: rgba(0, 0, 0, 0.5); padding: 6px 10px; pointer-events: none; white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud"></div>
+
+  <div id="join">
+    <form id="joinForm">
+      <h1>Připojit se do hry</h1>
+      <input id="nameInput" maxlength="16" placeholder="Tvoje jméno" autofocus />
+      <button type="submit">Hrát</button>
+      <p style="opacity:.6;font-size:13px;margin-bottom:0">Pohyb: WASD nebo šipky</p>
+    </form>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
