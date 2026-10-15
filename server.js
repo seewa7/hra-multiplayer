@@ -55,6 +55,44 @@ const COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6", "#e67e22"
 let nextId = 1;
 const players = new Map(); // id -> hráč
 
+// Definice nepřátel (základní enemáci - slizouni s různými vlastnostmi)
+const ENEMY_DEFS = [
+  { type: "slime_green", name: "Zelený sliz", color: "#2ecc71", eyeColor: "#1b5e20", speed: 45, maxHp: 2, size: 10 },
+  { type: "slime_red",   name: "Ohnivý sliz", color: "#e74c3c", eyeColor: "#7f1d1d", speed: 65, maxHp: 3, size: 11 },
+  { type: "slime_purple",name: "Obří sliz",   color: "#9b59b6", eyeColor: "#4a148c", speed: 35, maxHp: 5, size: 14 },
+];
+
+let nextEnemyId = 1;
+const enemies = [];
+
+function spawnEnemy(defIndex) {
+  const def = ENEMY_DEFS[defIndex % ENEMY_DEFS.length];
+  return {
+    id: nextEnemyId++,
+    type: def.type,
+    name: def.name,
+    color: def.color,
+    eyeColor: def.eyeColor,
+    speed: def.speed,
+    hp: def.maxHp,
+    maxHp: def.maxHp,
+    size: def.size,
+    x: Math.random() * (MAP_W * TILE - 60) + 30,
+    y: Math.random() * (MAP_H * TILE - 60) + 30,
+    dir: "down",
+    moving: true,
+    wanderDir: { x: 0, y: 0 },
+    wanderTimer: 0,
+    hitUntil: 0,
+    respawnTimer: 0,
+  };
+}
+
+// Spustíme 6 základních enemáků na mapě
+for (let i = 0; i < 6; i++) {
+  enemies.push(spawnEnemy(i));
+}
+
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -83,6 +121,12 @@ wss.on("connection", (ws) => {
         dir: "down",
         moving: false,
         input: { up: false, down: false, left: false, right: false },
+        hp: 3,
+        maxHp: 3,
+        score: 0,
+        invulnerableUntil: 0,
+        attackUntil: 0,
+        lastAttack: 0,
       };
       players.set(id, player);
       send(ws, { type: "welcome", id });
@@ -98,6 +142,44 @@ wss.on("connection", (ws) => {
         right: !!msg.right,
       };
     }
+
+    // Hráč zaútočil (klávesa Space nebo klik myší)
+    if (msg.type === "attack" && player && player.hp > 0) {
+      const now = Date.now();
+      if (now - player.lastAttack > 300) {
+        player.lastAttack = now;
+        player.attackUntil = now + 180;
+
+        // Dosah útoku před hráčem
+        let ax = player.x;
+        let ay = player.y;
+        if (player.dir === "left") ax -= 18;
+        if (player.dir === "right") ax += 18;
+        if (player.dir === "up") ay -= 18;
+        if (player.dir === "down") ay += 18;
+
+        for (const e of enemies) {
+          if (e.hp <= 0) continue;
+          const dist = Math.hypot(e.x - ax, e.y - ay);
+          if (dist < 22) {
+            e.hp -= 1;
+            e.hitUntil = now + 200;
+
+            // Odhození nepřítele (knockback)
+            const angle = Math.atan2(e.y - player.y, e.x - player.x);
+            e.x += Math.cos(angle) * 22;
+            e.y += Math.sin(angle) * 22;
+            e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
+            e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+
+            if (e.hp <= 0) {
+              player.score = (player.score || 0) + 1;
+              e.respawnTimer = 4; // oživí se za 4 vteřiny
+            }
+          }
+        }
+      }
+    }
   });
 
   ws.on("close", () => {
@@ -109,11 +191,12 @@ wss.on("connection", (ws) => {
 });
 
 // ---------- 3) Herní smyčka ----------
-// Server je "šéf" – jen on rozhoduje, kde kdo je. Klienti mu
-// posílají jen klávesy, takže nikdo nemůže podvádět s pozicí.
+// Server je "šéf" – jen on rozhoduje, kde kdo je a co dělají nepřátelé.
 setInterval(() => {
   const dt = 1 / TICK_RATE;
+  const now = Date.now();
 
+  // 3a) Pohyb hráčů
   for (const p of players.values()) {
     let dx = 0, dy = 0;
     if (p.input.left) dx -= 1;
@@ -141,10 +224,118 @@ setInterval(() => {
     else if (dy > 0) p.dir = "down";
   }
 
-  // pošli všem aktuální stav
+  // 3b) AI nepřátel a kolize
+  for (const e of enemies) {
+    if (e.hp <= 0) {
+      e.respawnTimer -= dt;
+      if (e.respawnTimer <= 0) {
+        // Respawn na náhodném místě
+        e.hp = e.maxHp;
+        e.x = Math.random() * (MAP_W * TILE - 60) + 30;
+        e.y = Math.random() * (MAP_H * TILE - 60) + 30;
+      }
+      continue;
+    }
+
+    // Najdi nejbližšího živého hráče
+    let nearest = null;
+    let minDist = Infinity;
+    for (const p of players.values()) {
+      if (p.hp <= 0) continue;
+      const d = Math.hypot(p.x - e.x, p.y - e.y);
+      if (d < minDist) {
+        minDist = d;
+        nearest = p;
+      }
+    }
+
+    let edx = 0, edy = 0;
+    const CHASE_RADIUS = 160;
+
+    if (nearest && minDist < CHASE_RADIUS) {
+      // Pronásledování hráče
+      const angle = Math.atan2(nearest.y - e.y, nearest.x - e.x);
+      edx = Math.cos(angle);
+      edy = Math.sin(angle);
+    } else {
+      // Náhodné bloumání po louce
+      e.wanderTimer -= dt;
+      if (e.wanderTimer <= 0) {
+        if (Math.random() < 0.3) {
+          e.wanderDir = { x: 0, y: 0 };
+        } else {
+          const angle = Math.random() * Math.PI * 2;
+          e.wanderDir = { x: Math.cos(angle), y: Math.sin(angle) };
+        }
+        e.wanderTimer = 1.5 + Math.random() * 2;
+      }
+      edx = e.wanderDir.x;
+      edy = e.wanderDir.y;
+    }
+
+    e.x += edx * e.speed * dt;
+    e.y += edy * e.speed * dt;
+
+    e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
+    e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+
+    e.moving = edx !== 0 || edy !== 0;
+    if (Math.abs(edx) > Math.abs(edy)) {
+      e.dir = edx > 0 ? "right" : "left";
+    } else if (edy !== 0) {
+      e.dir = edy > 0 ? "down" : "up";
+    }
+
+    // Kolize s hráči
+    for (const p of players.values()) {
+      if (p.hp <= 0) continue;
+      const dist = Math.hypot(p.x - e.x, p.y - e.y);
+      const hitRadius = (e.size || 10) + 6;
+
+      if (dist < hitRadius && now > p.invulnerableUntil) {
+        p.hp -= 1;
+        p.invulnerableUntil = now + 1200; // 1.2s imunita proti další ráně
+
+        // Odhození hráče od nepřítele
+        const angle = Math.atan2(p.y - e.y, p.x - e.x);
+        p.x += Math.cos(angle) * 25;
+        p.y += Math.sin(angle) * 25;
+        p.x = Math.max(8, Math.min(MAP_W * TILE - 8, p.x));
+        p.y = Math.max(8, Math.min(MAP_H * TILE - 2, p.y));
+
+        if (p.hp <= 0) {
+          // Hráč byl zasažen a ztratil všechny životy -> respawn
+          p.hp = p.maxHp;
+          p.x = (MAP_W * TILE) / 2 + (Math.random() - 0.5) * 50;
+          p.y = (MAP_H * TILE) / 2 + (Math.random() - 0.5) * 50;
+          p.invulnerableUntil = now + 2000;
+        }
+      }
+    }
+  }
+
+  // 3c) Pošli všem aktuální stav
   const state = JSON.stringify({
     type: "state",
-    players: [...players.values()].map(({ input, ...rest }) => rest),
+    players: [...players.values()].map(({ input, ...rest }) => ({
+      ...rest,
+      invulnerable: now < rest.invulnerableUntil,
+      attacking: now < rest.attackUntil,
+    })),
+    enemies: enemies.filter((e) => e.hp > 0).map((e) => ({
+      id: e.id,
+      type: e.type,
+      name: e.name,
+      color: e.color,
+      eyeColor: e.eyeColor,
+      size: e.size,
+      x: Math.round(e.x * 10) / 10,
+      y: Math.round(e.y * 10) / 10,
+      dir: e.dir,
+      hp: e.hp,
+      maxHp: e.maxHp,
+      hit: now < e.hitUntil,
+    })),
   });
   for (const client of wss.clients) {
     if (client.readyState === client.OPEN) client.send(state);

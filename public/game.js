@@ -15,6 +15,7 @@ let scale = 3; // jak moc zvětšit pixely
 let myId = null;
 let connected = false;
 const players = new Map(); // id -> { ...data ze serveru, rx, ry (pozice pro kreslení) }
+const enemies = new Map(); // id -> { ...data ze serveru, rx, ry }
 
 // ---------- Připojení k serveru ----------
 // Připojíme se na stejnou adresu, ze které se stránka načetla.
@@ -34,14 +35,26 @@ ws.onmessage = (e) => {
   }
 
   if (msg.type === "state") {
-    const seen = new Set();
+    // Aktualizace hráčů
+    const seenPlayers = new Set();
     for (const p of msg.players) {
-      seen.add(p.id);
+      seenPlayers.add(p.id);
       const old = players.get(p.id);
       // rx/ry = kde hráče kreslíme; plynule se posouvá za skutečnou pozicí
       players.set(p.id, { ...p, rx: old ? old.rx : p.x, ry: old ? old.ry : p.y });
     }
-    for (const id of players.keys()) if (!seen.has(id)) players.delete(id);
+    for (const id of players.keys()) if (!seenPlayers.has(id)) players.delete(id);
+
+    // Aktualizace nepřátel
+    if (msg.enemies) {
+      const seenEnemies = new Set();
+      for (const en of msg.enemies) {
+        seenEnemies.add(en.id);
+        const old = enemies.get(en.id);
+        enemies.set(en.id, { ...en, rx: old ? old.rx : en.x, ry: old ? old.ry : en.y });
+      }
+      for (const id of enemies.keys()) if (!seenEnemies.has(id)) enemies.delete(id);
+    }
   }
 };
 
@@ -81,9 +94,21 @@ function setKey(code, pressed) {
   }
   return true;
 }
-addEventListener("keydown", (e) => { if (setKey(e.code, true)) e.preventDefault(); });
+addEventListener("keydown", (e) => {
+  if (e.code === "Space" && myId !== null) {
+    send({ type: "attack" });
+    e.preventDefault();
+    return;
+  }
+  if (setKey(e.code, true)) e.preventDefault();
+});
 addEventListener("keyup", (e) => setKey(e.code, false));
 addEventListener("blur", () => { for (const code in KEYS) setKey(code, false); });
+
+// Kliknutím myši lze také zaútočit
+canvas.addEventListener("mousedown", () => {
+  if (myId !== null) send({ type: "attack" });
+});
 
 // ---------- Mapa ----------
 // Náhodné, ale pro všechny stejné – "náhoda" se počítá z pozice dlaždice.
@@ -164,6 +189,91 @@ function getSprite(color, dir, legs) {
   return c;
 }
 
+// ---------- Nepřátelé (Slizouni - pixel art) ----------
+const SLIME_FRAMES = [
+  // normální stav (10x8)
+  [
+    "..XXXXXX..",
+    ".XWWXXXXX.",
+    "XXXXXXXXXX",
+    "XEEXXXEEXX",
+    "XEEXXXEEXX",
+    "XXXXXXXXXX",
+    "XXXXXXXXXX",
+    ".XXXXXXXX.",
+  ],
+  // poskočení / zmáčknutí (12x7)
+  [
+    "...XXXXXX...",
+    "..XWWXXXXX..",
+    ".XXXXXXXXXX.",
+    "XXEEXXXEEXXX",
+    "XXEEXXXEEXXX",
+    "XXXXXXXXXXXX",
+    ".XXXXXXXXXX.",
+  ],
+];
+
+const slimeSpriteCache = new Map();
+function getSlimeSprite(color, eyeColor, hit, frameIndex) {
+  const key = `${color}_${eyeColor}_${hit}_${frameIndex}`;
+  if (slimeSpriteCache.has(key)) return slimeSpriteCache.get(key);
+
+  const rows = SLIME_FRAMES[frameIndex % SLIME_FRAMES.length];
+  const c = document.createElement("canvas");
+  c.width = rows[0].length;
+  c.height = rows.length;
+  const g = c.getContext("2d");
+
+  const pal = {
+    X: hit ? "#ffffff" : color,
+    W: hit ? "#ffffff" : "rgba(255,255,255,0.75)",
+    E: hit ? "#ff7777" : eyeColor,
+  };
+
+  rows.forEach((row, y) => {
+    [...row].forEach((ch, x) => {
+      if (pal[ch]) {
+        g.fillStyle = pal[ch];
+        g.fillRect(x, y, 1, 1);
+      }
+    });
+  });
+
+  slimeSpriteCache.set(key, c);
+  return c;
+}
+
+function drawAttackSlash(ctx, x, y, dir) {
+  ctx.save();
+  if (dir === "left") {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x - 14, y - 11, 3, 10);
+    ctx.fillStyle = "#ffeb3b";
+    ctx.fillRect(x - 12, y - 13, 3, 14);
+    ctx.fillRect(x - 15, y - 8, 2, 6);
+  } else if (dir === "right") {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x + 11, y - 11, 3, 10);
+    ctx.fillStyle = "#ffeb3b";
+    ctx.fillRect(x + 9, y - 13, 3, 14);
+    ctx.fillRect(x + 13, y - 8, 2, 6);
+  } else if (dir === "up") {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x - 5, y - 18, 10, 3);
+    ctx.fillStyle = "#ffeb3b";
+    ctx.fillRect(x - 7, y - 16, 14, 3);
+    ctx.fillRect(x - 3, y - 19, 6, 2);
+  } else {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x - 5, y + 1, 10, 3);
+    ctx.fillStyle = "#ffeb3b";
+    ctx.fillRect(x - 7, y - 1, 14, 3);
+    ctx.fillRect(x - 3, y + 2, 6, 2);
+  }
+  ctx.restore();
+}
+
 // ---------- Kreslení ----------
 function resize() {
   canvas.width = innerWidth;
@@ -178,11 +288,18 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
 
-  // plynulý pohyb mezi aktualizacemi ze serveru
+  // plynulý pohyb hráčů
   for (const p of players.values()) {
     const t = Math.min(1, dt * 15);
     p.rx += (p.x - p.rx) * t;
     p.ry += (p.y - p.ry) * t;
+  }
+
+  // plynulý pohyb nepřátel
+  for (const en of enemies.values()) {
+    const t = Math.min(1, dt * 15);
+    en.rx += (en.x - en.rx) * t;
+    en.ry += (en.y - en.ry) * t;
   }
 
   // kamera sleduje mě
@@ -204,24 +321,70 @@ function frame(now) {
   ctx.fillRect(-4, -4, MAP_W * TILE + 8, MAP_H * TILE + 8);
   ctx.drawImage(mapCanvas, 0, 0);
 
-  // hráči – seřazení podle y, aby ten níž byl "před" tím výš
-  const list = [...players.values()].sort((a, b) => a.ry - b.ry);
-  const walk = [1, 0, 2, 0][Math.floor(now / 120) % 4];
+  // Vykreslení entit – seřazení podle y (depth sorting)
+  const renderables = [
+    ...[...players.values()].map((p) => ({ type: "player", obj: p, y: p.ry })),
+    ...[...enemies.values()].map((e) => ({ type: "enemy", obj: e, y: e.ry })),
+  ].sort((a, b) => a.y - b.y);
 
-  for (const p of list) {
-    const x = Math.round(p.rx), y = Math.round(p.ry);
-    ctx.fillStyle = "rgba(0,0,0,0.25)"; // stín
-    ctx.fillRect(x - 4, y - 1, 8, 2);
-    ctx.fillRect(x - 5, y, 10, 1);
-    ctx.drawImage(getSprite(p.color, p.dir, p.moving ? walk : 0), x - 5, y - 14);
+  const walk = [1, 0, 2, 0][Math.floor(now / 120) % 4];
+  const slimeAnim = Math.floor(now / 180) % 2;
+
+  for (const item of renderables) {
+    if (item.type === "player") {
+      const p = item.obj;
+      const x = Math.round(p.rx), y = Math.round(p.ry);
+
+      // stín
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(x - 4, y - 1, 8, 2);
+      ctx.fillRect(x - 5, y, 10, 1);
+
+      // blikání při nesmrtelnosti po zásahu
+      if (p.invulnerable && Math.floor(now / 100) % 2 === 0) {
+        ctx.globalAlpha = 0.4;
+      }
+      ctx.drawImage(getSprite(p.color, p.dir, p.moving ? walk : 0), x - 5, y - 14);
+      ctx.globalAlpha = 1.0;
+
+      // vizuální efekt útoku
+      if (p.attacking) {
+        drawAttackSlash(ctx, x, y, p.dir);
+      }
+    } else if (item.type === "enemy") {
+      const en = item.obj;
+      const ex = Math.round(en.rx), ey = Math.round(en.ry);
+      const sprite = getSlimeSprite(en.color, en.eyeColor, en.hit, slimeAnim);
+      const sw = sprite.width;
+
+      // stín slizu
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(ex - Math.floor(sw / 2), ey - 1, sw, 2);
+
+      // tělo slizu
+      ctx.drawImage(sprite, ex - Math.floor(sw / 2), ey - sprite.height);
+
+      // malý ukazatel životů nepřítele (pokud je zraněný)
+      if (en.hp < en.maxHp) {
+        const barW = 12;
+        const barX = ex - 6;
+        const barY = ey - sprite.height - 4;
+        ctx.fillStyle = "#c0392b";
+        ctx.fillRect(barX, barY, barW, 2);
+        ctx.fillStyle = "#2ecc71";
+        ctx.fillRect(barX, barY, Math.round(barW * (en.hp / en.maxHp)), 2);
+      }
+    }
   }
 
-  // jména (v normálním rozlišení, aby byl text ostrý)
+  // Texty a jména (v normálním rozlišení pro ostrý text)
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // Jména hráčů
   ctx.font = "bold 13px monospace";
   ctx.textAlign = "center";
   ctx.lineWidth = 3;
-  for (const p of list) {
+  for (const p of players.values()) {
     const sx = (Math.round(p.rx) - camX) * scale;
     const sy = (Math.round(p.ry) - camY - 16) * scale;
     ctx.strokeStyle = "#000";
@@ -230,9 +393,31 @@ function frame(now) {
     ctx.fillText(p.name, sx, sy);
   }
 
+  // Štítky nepřátel
+  ctx.font = "bold 10px monospace";
+  for (const en of enemies.values()) {
+    const sx = (Math.round(en.rx) - camX) * scale;
+    const sy = (Math.round(en.ry) - camY - 11) * scale;
+    ctx.strokeStyle = "rgba(0,0,0,0.75)";
+    ctx.strokeText(en.name, sx, sy);
+    ctx.fillStyle = en.color;
+    ctx.fillText(en.name, sx, sy);
+  }
+
   // HUD
   if (connected) {
-    hud.textContent = `Hráči online: ${players.size}\n` + list.map((p) => "• " + p.name).join("\n");
+    let hudText = `Hráči online: ${players.size}  |  Enemáci na mapě: ${enemies.size}\n`;
+    if (me) {
+      const hearts = "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
+      hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
+      hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok\n\n`;
+    }
+    hudText += `Žebříček:\n`;
+    hudText += [...players.values()]
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .map((p) => `• ${p.name}: ${p.score || 0} bodů (${p.hp || 0}/${p.maxHp || 3} HP)`)
+      .join("\n");
+    hud.textContent = hudText;
   }
 
   requestAnimationFrame(frame);
