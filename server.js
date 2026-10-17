@@ -93,6 +93,32 @@ for (let i = 0; i < 6; i++) {
   enemies.push(spawnEnemy(i));
 }
 
+// ---------- Předměty na mapě (Loot) ----------
+let nextItemId = 1;
+const items = new Map(); // id -> { id, type, x, y }
+
+function spawnItem(type, x, y) {
+  const id = nextItemId++;
+  items.set(id, {
+    id,
+    type, // "coin" (mince) nebo "heart" (srdíčko pro doplnění HP)
+    x: Math.round(x * 10) / 10,
+    y: Math.round(y * 10) / 10,
+  });
+}
+
+function spawnRandomItem() {
+  const type = Math.random() < 0.7 ? "coin" : "heart";
+  const x = Math.random() * (MAP_W * TILE - 60) + 30;
+  const y = Math.random() * (MAP_H * TILE - 60) + 30;
+  spawnItem(type, x, y);
+}
+
+// Počáteční předměty na louce
+for (let i = 0; i < 6; i++) {
+  spawnRandomItem();
+}
+
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -175,6 +201,12 @@ wss.on("connection", (ws) => {
             if (e.hp <= 0) {
               player.score = (player.score || 0) + 1;
               e.respawnTimer = 4; // oživí se za 4 vteřiny
+
+              // Šance na vypadnutí lootu z poraženého nepřítele
+              if (Math.random() < 0.7) {
+                const dropType = Math.random() < 0.65 ? "coin" : "heart";
+                spawnItem(dropType, e.x, e.y);
+              }
             }
           }
         }
@@ -192,6 +224,8 @@ wss.on("connection", (ws) => {
 
 // ---------- 3) Herní smyčka ----------
 // Server je "šéf" – jen on rozhoduje, kde kdo je a co dělají nepřátelé.
+let itemSpawnTimer = 0;
+
 setInterval(() => {
   const dt = 1 / TICK_RATE;
   const now = Date.now();
@@ -314,7 +348,33 @@ setInterval(() => {
     }
   }
 
-  // 3c) Pošli všem aktuální stav
+  // 3c) Sbírání předmětů (lootu) hráči a obnova na mapě
+  for (const p of players.values()) {
+    if (p.hp <= 0) continue;
+    for (const [itemId, item] of items.entries()) {
+      const dist = Math.hypot(p.x - item.x, p.y - item.y);
+      if (dist < 14) {
+        if (item.type === "coin") {
+          p.score = (p.score || 0) + 1;
+          items.delete(itemId);
+        } else if (item.type === "heart") {
+          if (p.hp < p.maxHp) {
+            p.hp = Math.min(p.maxHp, p.hp + 1);
+            items.delete(itemId);
+          }
+        }
+      }
+    }
+  }
+
+  // Průběžné doplňování předmětů na mapě
+  itemSpawnTimer += dt;
+  if (itemSpawnTimer > 6 && items.size < 8) {
+    itemSpawnTimer = 0;
+    spawnRandomItem();
+  }
+
+  // 3d) Pošli všem aktuální stav
   const state = JSON.stringify({
     type: "state",
     players: [...players.values()].map(({ input, ...rest }) => ({
@@ -335,6 +395,12 @@ setInterval(() => {
       hp: e.hp,
       maxHp: e.maxHp,
       hit: now < e.hitUntil,
+    })),
+    items: [...items.values()].map((it) => ({
+      id: it.id,
+      type: it.type,
+      x: it.x,
+      y: it.y,
     })),
   });
   for (const client of wss.clients) {
