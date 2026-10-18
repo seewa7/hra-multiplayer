@@ -423,6 +423,8 @@ function frame(now) {
       }
     } else if (item.type === "item") {
       const it = item.obj;
+      // předmět, který brzy zmizí, bliká
+      if (it.fading && Math.floor(now / 150) % 2 === 0) continue;
       if (it.type === "coin") {
         drawCoin(ctx, Math.round(it.x), Math.round(it.y), now);
       } else if (it.type === "heart") {
