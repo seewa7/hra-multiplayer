@@ -16,6 +16,7 @@ let myId = null;
 let connected = false;
 const players = new Map(); // id -> { ...data ze serveru, rx, ry (pozice pro kreslení) }
 const enemies = new Map(); // id -> { ...data ze serveru, rx, ry }
+const items = new Map(); // id -> { id, type, x, y }
 
 // ---------- Připojení k serveru ----------
 // Připojíme se na stejnou adresu, ze které se stránka načetla.
@@ -54,6 +55,16 @@ ws.onmessage = (e) => {
         enemies.set(en.id, { ...en, rx: old ? old.rx : en.x, ry: old ? old.ry : en.y });
       }
       for (const id of enemies.keys()) if (!seenEnemies.has(id)) enemies.delete(id);
+    }
+
+    // Aktualizace předmětů (loot)
+    if (msg.items) {
+      const seenItems = new Set();
+      for (const it of msg.items) {
+        seenItems.add(it.id);
+        items.set(it.id, it);
+      }
+      for (const id of items.keys()) if (!seenItems.has(id)) items.delete(id);
     }
   }
 };
@@ -274,6 +285,41 @@ function drawAttackSlash(ctx, x, y, dir) {
   ctx.restore();
 }
 
+// ---------- Předměty na zemi (Loot - pixel art) ----------
+function drawCoin(ctx, x, y, now) {
+  const floatY = y + Math.sin(now / 180 + x) * 2;
+  // stín mince
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(x - 3, y - 1, 6, 2);
+
+  // zlatá mince
+  ctx.fillStyle = "#d4af37";
+  ctx.fillRect(x - 3, floatY - 6, 6, 6);
+  ctx.fillStyle = "#f1c40f";
+  ctx.fillRect(x - 2, floatY - 5, 4, 4);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(x - 1, floatY - 4, 2, 2);
+}
+
+function drawHeart(ctx, x, y, now) {
+  const floatY = y + Math.sin(now / 200 + x) * 2;
+  // stín srdíčka
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(x - 4, y - 1, 8, 2);
+
+  // červené srdíčko
+  ctx.fillStyle = "#e74c3c";
+  ctx.fillRect(x - 3, floatY - 6, 2, 2);
+  ctx.fillRect(x + 1, floatY - 6, 2, 2);
+  ctx.fillRect(x - 4, floatY - 4, 8, 2);
+  ctx.fillRect(x - 3, floatY - 2, 6, 2);
+  ctx.fillRect(x - 1, floatY, 2, 1);
+
+  // odlesk
+  ctx.fillStyle = "#ff7675";
+  ctx.fillRect(x - 2, floatY - 5, 1, 1);
+}
+
 // ---------- Kreslení ----------
 function resize() {
   canvas.width = innerWidth;
@@ -325,6 +371,7 @@ function frame(now) {
   const renderables = [
     ...[...players.values()].map((p) => ({ type: "player", obj: p, y: p.ry })),
     ...[...enemies.values()].map((e) => ({ type: "enemy", obj: e, y: e.ry })),
+    ...[...items.values()].map((it) => ({ type: "item", obj: it, y: it.y })),
   ].sort((a, b) => a.y - b.y);
 
   const walk = [1, 0, 2, 0][Math.floor(now / 120) % 4];
@@ -374,6 +421,15 @@ function frame(now) {
         ctx.fillStyle = "#2ecc71";
         ctx.fillRect(barX, barY, Math.round(barW * (en.hp / en.maxHp)), 2);
       }
+    } else if (item.type === "item") {
+      const it = item.obj;
+      // předmět, který brzy zmizí, bliká
+      if (it.fading && Math.floor(now / 150) % 2 === 0) continue;
+      if (it.type === "coin") {
+        drawCoin(ctx, Math.round(it.x), Math.round(it.y), now);
+      } else if (it.type === "heart") {
+        drawHeart(ctx, Math.round(it.x), Math.round(it.y), now);
+      }
     }
   }
 
@@ -410,7 +466,7 @@ function frame(now) {
     if (me) {
       const hearts = "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
       hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
-      hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok\n\n`;
+      hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok  |  🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)\n\n`;
     }
     hudText += `Žebříček:\n`;
     hudText += [...players.values()]

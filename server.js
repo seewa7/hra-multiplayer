@@ -20,6 +20,17 @@ const TILE = 16;
 const MAP_W = 50; // v dlaždicích
 const MAP_H = 35;
 
+// Předměty (loot)
+const ITEM_PICKUP_RADIUS = 14; // jak blízko musí hráč být, aby předmět sebral
+const ITEM_LIFETIME_MS = 30000; // po této době předmět zmizí
+const ITEM_FADING_MS = 5000; // posledních pár vteřin předmět bliká
+const ITEM_SPAWN_INTERVAL = 6; // jak často (s) se na mapě objeví nový předmět
+const ITEM_SPAWN_LIMIT = 8; // náhodné doplňování se zastaví, když je na mapě tolik předmětů
+const ITEM_HARD_LIMIT = 16; // absolutní strop (i s předměty z nepřátel), nejstarší zmizí
+const ENEMY_DROP_CHANCE = 0.7; // šance, že poražený nepřítel upustí předmět
+const COIN_CHANCE_DROP = 0.65; // z dropu je tolik procent mince, zbytek srdce
+const COIN_CHANCE_RANDOM = 0.7; // totéž pro předměty náhodně na louce
+
 // ---------- 1) Obyčejný webový server pro soubory hry ----------
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -91,6 +102,37 @@ function spawnEnemy(defIndex) {
 // Spustíme 6 základních enemáků na mapě
 for (let i = 0; i < 6; i++) {
   enemies.push(spawnEnemy(i));
+}
+
+// ---------- Předměty na mapě (Loot) ----------
+let nextItemId = 1;
+const items = new Map(); // id -> { id, type, x, y }
+
+function spawnItem(type, x, y) {
+  // strop na počet předmětů – když je plno, zmizí ten nejstarší
+  while (items.size >= ITEM_HARD_LIMIT) {
+    items.delete(items.keys().next().value);
+  }
+  const id = nextItemId++;
+  items.set(id, {
+    id,
+    type, // "coin" (mince) nebo "heart" (srdíčko pro doplnění HP)
+    x: Math.round(x * 10) / 10,
+    y: Math.round(y * 10) / 10,
+    expiresAt: Date.now() + ITEM_LIFETIME_MS,
+  });
+}
+
+function spawnRandomItem() {
+  const type = Math.random() < COIN_CHANCE_RANDOM ? "coin" : "heart";
+  const x = Math.random() * (MAP_W * TILE - 60) + 30;
+  const y = Math.random() * (MAP_H * TILE - 60) + 30;
+  spawnItem(type, x, y);
+}
+
+// Počáteční předměty na louce
+for (let i = 0; i < 6; i++) {
+  spawnRandomItem();
 }
 
 function send(ws, msg) {
@@ -175,6 +217,12 @@ wss.on("connection", (ws) => {
             if (e.hp <= 0) {
               player.score = (player.score || 0) + 1;
               e.respawnTimer = 4; // oživí se za 4 vteřiny
+
+              // Šance na vypadnutí lootu z poraženého nepřítele
+              if (Math.random() < ENEMY_DROP_CHANCE) {
+                const dropType = Math.random() < COIN_CHANCE_DROP ? "coin" : "heart";
+                spawnItem(dropType, e.x, e.y);
+              }
             }
           }
         }
@@ -192,6 +240,8 @@ wss.on("connection", (ws) => {
 
 // ---------- 3) Herní smyčka ----------
 // Server je "šéf" – jen on rozhoduje, kde kdo je a co dělají nepřátelé.
+let itemSpawnTimer = 0;
+
 setInterval(() => {
   const dt = 1 / TICK_RATE;
   const now = Date.now();
@@ -314,7 +364,39 @@ setInterval(() => {
     }
   }
 
-  // 3c) Pošli všem aktuální stav
+  // 3c) Sbírání předmětů (lootu) hráči a obnova na mapě
+  for (const p of players.values()) {
+    if (p.hp <= 0) continue;
+    for (const [itemId, item] of items.entries()) {
+      const dist = Math.hypot(p.x - item.x, p.y - item.y);
+      if (dist < ITEM_PICKUP_RADIUS) {
+        if (item.type === "coin") {
+          p.score = (p.score || 0) + 1;
+          items.delete(itemId);
+        } else if (item.type === "heart") {
+          if (p.hp < p.maxHp) {
+            p.hp = Math.min(p.maxHp, p.hp + 1);
+            items.delete(itemId);
+          }
+        }
+      }
+    }
+  }
+
+  // Průběžné doplňování předmětů na mapě
+  // Nesebrané předměty po čase zmizí (jinak by se mapa zaplnila srdci,
+  // která nikdo nechce, a nové předměty by se přestaly objevovat)
+  for (const [itemId, item] of items.entries()) {
+    if (now >= item.expiresAt) items.delete(itemId);
+  }
+
+  itemSpawnTimer += dt;
+  if (itemSpawnTimer > ITEM_SPAWN_INTERVAL && items.size < ITEM_SPAWN_LIMIT) {
+    itemSpawnTimer = 0;
+    spawnRandomItem();
+  }
+
+  // 3d) Pošli všem aktuální stav
   const state = JSON.stringify({
     type: "state",
     players: [...players.values()].map(({ input, ...rest }) => ({
@@ -335,6 +417,13 @@ setInterval(() => {
       hp: e.hp,
       maxHp: e.maxHp,
       hit: now < e.hitUntil,
+    })),
+    items: [...items.values()].map((it) => ({
+      id: it.id,
+      type: it.type,
+      x: it.x,
+      y: it.y,
+      fading: it.expiresAt - now < ITEM_FADING_MS, // klient pak předmět nechá blikat
     })),
   });
   for (const client of wss.clients) {
