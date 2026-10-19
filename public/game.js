@@ -689,18 +689,20 @@ function frame(now) {
       const en = item.obj;
       const ex = Math.round(en.rx), ey = Math.round(en.ry);
       const sprite = getSlimeSprite(en.color, en.eyeColor, en.hit, slimeAnim);
-      const sw = sprite.width;
+      const k = en.boss ? 2 : 1; // boss je dvakrát větší
+      const sw = sprite.width * k;
+      const sh = sprite.height * k;
 
       // stín slizu
       ctx.fillStyle = "rgba(0,0,0,0.25)";
       ctx.fillRect(ex - Math.floor(sw / 2), ey - 1, sw, 2);
 
       // tělo slizu
-      ctx.drawImage(sprite, ex - Math.floor(sw / 2), ey - sprite.height);
+      ctx.drawImage(sprite, ex - Math.floor(sw / 2), ey - sh, sw, sh);
 
       // Fotograf: označený nepřítel má nad sebou žlutou šipku, omráčený kroužící hvězdičky
       if (en.marked) {
-        const by = ey - sprite.height - (en.hp < en.maxHp ? 10 : 6) + Math.round(Math.sin(now / 120));
+        const by = ey - sh - (en.hp < en.maxHp || en.boss ? 10 : 6) + Math.round(Math.sin(now / 120));
         ctx.fillStyle = "#000";
         ctx.fillRect(ex - 3, by - 1, 7, 1);
         ctx.fillRect(ex - 2, by, 5, 1);
@@ -715,15 +717,15 @@ function frame(now) {
         ctx.fillStyle = "#fff";
         for (let i = 0; i < 3; i++) {
           const a = now / 150 + (i * Math.PI * 2) / 3;
-          ctx.fillRect(Math.round(ex + Math.cos(a) * 6), Math.round(ey - sprite.height - 2 + Math.sin(a) * 2), 1, 1);
+          ctx.fillRect(Math.round(ex + Math.cos(a) * 6), Math.round(ey - sh - 2 + Math.sin(a) * 2), 1, 1);
         }
       }
 
       // malý ukazatel životů nepřítele (pokud je zraněný)
-      if (en.hp < en.maxHp) {
-        const barW = 12;
-        const barX = ex - 6;
-        const barY = ey - sprite.height - 4;
+      if (en.hp < en.maxHp || en.boss) {
+        const barW = en.boss ? 28 : 12;
+        const barX = ex - barW / 2;
+        const barY = ey - sh - 4;
         ctx.fillStyle = "#c0392b";
         ctx.fillRect(barX, barY, barW, 2);
         ctx.fillStyle = "#2ecc71";
@@ -763,8 +765,9 @@ function frame(now) {
   // Štítky nepřátel
   ctx.font = "bold 10px monospace";
   for (const en of enemies.values()) {
+    if (!en.boss && enemies.size > 8) continue; // u hejna by jména jen zaplavila obrazovku
     const sx = (Math.round(en.rx) - camX) * scale;
-    const sy = (Math.round(en.ry) - camY - 11) * scale;
+    const sy = (Math.round(en.ry) - camY - (en.boss ? 11 + 16 : 11)) * scale;
     ctx.strokeStyle = "rgba(0,0,0,0.75)";
     ctx.strokeText(en.name, sx, sy);
     ctx.fillStyle = en.color;
@@ -774,6 +777,8 @@ function frame(now) {
   // HUD
   if (connected) {
     let hudText = `Hráči online: ${players.size}  |  Enemáci na mapě: ${enemies.size}  |  Obtížnost: úroveň ${difficultyLevel}\n`;
+    const boss = [...enemies.values()].find((e) => e.boss);
+    if (boss) hudText += `⚠ BOSS ${boss.name}: ${Math.ceil(boss.hp)}/${Math.ceil(boss.maxHp)} HP\n`;
     if (me) {
       const hearts = me.dead
         ? "💀 mrtvý"
