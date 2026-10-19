@@ -13,7 +13,7 @@
     }
     #join form {
       background: #2a2a40; border: 4px solid #000; box-shadow: 6px 6px 0 #000;
-      padding: 24px; color: #fff; text-align: center; width: min(320px, 85vw);
+      padding: 24px; color: #fff; text-align: center; width: min(340px, 90vw);
     }
     #join h1 { margin: 0 0 16px; font-size: 22px; }
     #join input, #join button {
@@ -22,6 +22,17 @@
     }
     #join button { background: #2ecc71; cursor: pointer; font-weight: bold; }
     #join button:hover { background: #3ee681; }
+    #classes { display: flex; gap: 8px; margin-top: 8px; }
+    #classes label { flex: 1; cursor: pointer; }
+    #classes input { position: absolute; opacity: 0; pointer-events: none; }
+    #classes .card {
+      display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px;
+      background: #1d1d30; border: 3px solid #000; font-size: 14px; font-weight: bold;
+    }
+    #classes .card canvas { width: 64px; height: 64px; image-rendering: pixelated; }
+    #classes .card small { font-weight: normal; opacity: .6; font-size: 11px; line-height: 1.2; min-height: 26px; }
+    #classes input:checked + .card { border-color: #2ecc71; background: #26402f; box-shadow: 0 0 0 2px #2ecc71 inset; }
+    #classes input:focus-visible + .card { outline: 2px solid #fff; }
     #hud {
       position: fixed; top: 8px; left: 8px; color: #fff; font-size: 14px;
       background: rgba(0, 0, 0, 0.5); padding: 6px 10px; pointer-events: none; white-space: pre;
@@ -36,11 +47,22 @@
     <form id="joinForm">
       <h1>Připojit se do hry</h1>
       <input id="nameInput" maxlength="16" placeholder="Tvoje jméno" autofocus />
+      <div id="classes">
+        <label>
+          <input type="radio" name="cls" value="hero" checked />
+          <div class="card"><canvas width="64" height="64" id="thumb-hero"></canvas>Hrdina<small>Meč na blízko</small></div>
+        </label>
+        <label>
+          <input type="radio" name="cls" value="photographer" />
+          <div class="card"><canvas width="64" height="64" id="thumb-photographer"></canvas>Fotograf<small>Označuje, oslepuje, střílí paprskem</small></div>
+        </label>
+      </div>
       <button type="submit">Hrát</button>
-      <p style="opacity:.6;font-size:13px;margin-bottom:0">Pohyb: WASD nebo šipky | Útok: Mezerník / Kliknutí</p>
+      <p style="opacity:.6;font-size:13px;margin-bottom:0">Pohyb: WASD nebo šipky | Útok: Mezerník / Kliknutí<br />Fotograf navíc: Q Silný blesk, E Perfektní záběr</p>
     </form>
   </div>
 
+  <script src="shared/classes.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
