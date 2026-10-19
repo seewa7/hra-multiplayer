@@ -12,6 +12,7 @@ const os = require("os");
 const { WebSocketServer } = require("ws");
 const CLASSES = require("./public/shared/classes.js"); // sdílené s klientem
 const BUFFS = require("./public/shared/buffs.js"); // buffy a XP, sdílené s klientem
+const ADAM = require("./public/shared/adam.js"); // boss Adam (čísla souboje), sdílené s klientem
 
 const PORT = 3000;
 const TICK_RATE = 30; // kolikrát za sekundu se hra přepočítá
@@ -279,6 +280,340 @@ function applyBuff(p, id) {
   return true;
 }
 
+// Společné zranění hráče (kontakt se slizem i útoky bosse): štít zásah zablokuje, pak ubývají životy.
+// Vrací true, když hráč opravdu dostal zásah (ne když je nezranitelný).
+function hurtPlayer(p, dmg, now, from, opts = {}) {
+  if (p.hp <= 0 || now < p.invulnerableUntil) return false;
+  if (p.shield > 0) {
+    p.shield--; // štít zásah zablokuje
+    p.shieldAt = now + BUFFS.SHIELD_RECHARGE_MS;
+  } else {
+    p.hp -= dmg;
+  }
+  p.invulnerableUntil = now + (opts.invulMs ?? 1200); // imunita proti další ráně
+
+  if (from && opts.knockback) {
+    // Odhození hráče od zdroje zásahu
+    const angle = Math.atan2(p.y - from.y, p.x - from.x);
+    p.x += Math.cos(angle) * opts.knockback;
+    p.y += Math.sin(angle) * opts.knockback;
+    p.x = Math.max(8, Math.min(MAP_W * TILE - 8, p.x));
+    p.y = Math.max(8, Math.min(MAP_H * TILE - 2, p.y));
+  }
+  if (p.hp <= 0) killPlayer(p, now); // ztratil všechny životy
+  return true;
+}
+
+// ---------- Boss Adam ----------
+// Boss stojí uprostřed arény a nehýbe se. Server rozhoduje o všem (životy, fáze, výběr útoku a cíle,
+// dráhy projektilů, zásahy). Klienti dostanou ve stavu `adam` a `bossFx` jen to, co mají nakreslit.
+const adam = {
+  spawned: false,
+  defeated: false, // v téhle hře už byl poražen (znovu se neobjeví)
+  e: null, // záznam bosse v poli `enemies` (kvůli zásahům hráčů)
+  state: "idle", // idle | phase | defeated
+  phase: 1,
+  attack: null, // běžící útok
+  nextAttackAt: 0,
+  phaseBlinkUntil: 0,
+  defeatedAt: 0,
+  history: [], // posledních použitých útoků
+  lastTargetId: null,
+  attackSeq: 0,
+  fxSeq: 0,
+  fx: [], // projektily, varování a zóny
+};
+
+const rand = (min, max) => min + Math.random() * (max - min);
+const adamPivot = () => ({ x: (MAP_W * TILE) / 2 + ADAM.offset.x, y: (MAP_H * TILE) / 2 + ADAM.offset.y });
+const sumFrames = (arr, n = arr.length) => arr.slice(0, n).reduce((a, b) => a + b, 0);
+const alivePlayers = () => [...players.values()].filter((p) => p.hp > 0);
+
+function resetAdam() {
+  Object.assign(adam, {
+    spawned: false, defeated: false, e: null, state: "idle", phase: 1, attack: null,
+    nextAttackAt: 0, phaseBlinkUntil: 0, defeatedAt: 0, history: [], lastTargetId: null, fx: [],
+  });
+}
+
+function spawnAdam(now) {
+  const pos = adamPivot();
+  const hp = ADAM.baseHp * (1 + ADAM.hpPerExtraPlayer * (players.size - 1));
+  adam.e = {
+    id: nextEnemyId++,
+    adam: true, // zvláštní nepřítel: nehýbe se, neútočí kontaktem, nejde odhodit ani omráčit
+    type: "adam",
+    name: ADAM.name,
+    color: "#fff", eyeColor: "#000",
+    speed: 0,
+    hp, maxHp: hp,
+    size: ADAM.size,
+    xp: ADAM.xp,
+    x: pos.x, y: pos.y,
+    dir: "down", moving: false,
+    wanderDir: { x: 0, y: 0 }, wanderTimer: 0,
+    hitUntil: 0, respawnTimer: 0, markedUntil: 0, stunUntil: 0, slowUntil: 0,
+  };
+  enemies.push(adam.e);
+  Object.assign(adam, { spawned: true, state: "idle", phase: 1, attack: null, history: [], fx: [] });
+  adam.nextAttackAt = now + 2500; // první útok až po chvíli, ať se hráči rozkoukají
+  console.log(`  ⚠ Objevil se boss ${ADAM.name} (${Math.round(hp)} HP)`);
+}
+
+function onAdamDefeated(now) {
+  adam.state = "defeated";
+  adam.defeated = true;
+  adam.defeatedAt = now;
+  adam.attack = null;
+  adam.fx = []; // všechny efekty a zóny zmizí
+  console.log(`  ✔ Boss ${ADAM.name} poražen!`);
+}
+
+// Životy bosse rostou s počtem hráčů (poměr zbývajících životů se zachová)
+function scaleAdamHp() {
+  const e = adam.e;
+  const target = ADAM.baseHp * (1 + ADAM.hpPerExtraPlayer * (Math.max(1, players.size) - 1));
+  if (e.hp > 0 && Math.abs(e.maxHp - target) > 0.01) {
+    e.hp = (e.hp / e.maxHp) * target;
+    e.maxHp = target;
+  }
+}
+
+// Další cíl: střídáme živé hráče (ne pořád toho samého)
+function pickAdamTarget() {
+  const alive = alivePlayers().sort((a, b) => a.id - b.id);
+  if (alive.length === 0) return null;
+  const next = alive.find((p) => p.id > (adam.lastTargetId ?? -1)) || alive[0];
+  adam.lastTargetId = next.id;
+  return next;
+}
+
+function pickAdamAttack() {
+  let pool = adam.phase === 1 ? ["neural"] : adam.phase === 2 ? ["neural", "barbell"] : ["neural", "barbell", "overclock"];
+  const h = adam.history;
+  const last = h[h.length - 1];
+  // stejný útok nejvýš dvakrát po sobě
+  if (h.length >= 2 && last === h[h.length - 2] && pool.length > 1) pool = pool.filter((t) => t !== last);
+  // jinak spíš střídáme
+  if (pool.length > 1 && Math.random() < 0.7) pool = pool.filter((t) => t !== last);
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function addAdamFx(fx) {
+  fx.id = ++adam.fxSeq;
+  adam.fx.push(fx);
+  return fx;
+}
+
+function startAdamAttack(now) {
+  const target = pickAdamTarget();
+  if (!target) return;
+  const type = pickAdamAttack();
+  const sp = adam.phase === 3 ? ADAM.phase3Speed : 1; // ve 3. fázi o něco rychlejší
+  const cfg = ADAM.attacks[type];
+  const pos = adamPivot();
+  const attack = { id: ++adam.attackSeq, type, start: now, speed: sp, targetId: target.id, fired: false };
+
+  if (type === "neural") {
+    attack.fireAt = now + sumFrames(cfg.frames, cfg.fireFrame) * sp;
+    attack.endAt = now + sumFrames(cfg.frames) * sp;
+  } else if (type === "barbell") {
+    const impactAt = now + (cfg.telegraphMs + sumFrames(cfg.frames, cfg.impactFrame)) * sp;
+    const expandStart = impactAt + cfg.flashMs * sp;
+    const expandEnd = expandStart + cfg.expandMs * sp;
+    attack.endAt = expandEnd + cfg.decayMs * sp;
+    addAdamFx({ kind: "shock", x: pos.x, y: pos.y, start: now, impactAt, expandStart, expandEnd, until: attack.endAt, hit: new Set(), attackId: attack.id });
+  } else {
+    // overclock: 2–4 výboje na pozice hráčů / různé směry, každý je před výstřelem vidět na zemi
+    const n = Math.floor(rand(cfg.shots[0], cfg.shots[1] + 1));
+    const alive = alivePlayers().sort((a, b) => a.id - b.id);
+    const fireBase = now + sumFrames(cfg.frames, cfg.fireFrame) * sp;
+    attack.shots = [];
+    for (let i = 0; i < n; i++) {
+      const t = i === 0 ? target : alive[i % alive.length];
+      const spread = i < alive.length ? 0 : rand(-0.6, 0.6); // navíc výboje jdou trochu vedle, ať se zóny nepřekrývají
+      const angle = Math.atan2(t.y - pos.y, t.x - pos.x) + spread;
+      const fireAt = fireBase + i * cfg.staggerMs * sp;
+      attack.shots.push({ angle, fireAt, fired: false, aim: null });
+      attack.shots[i].aim = addAdamFx({ kind: "oc_aim", x: pos.x, y: pos.y, angle, start: now, until: fireAt, attackId: attack.id });
+    }
+    attack.endAt = Math.max(now + sumFrames(cfg.frames) * sp, fireBase + (n - 1) * cfg.staggerMs * sp + 200);
+  }
+
+  adam.attack = attack;
+  adam.history.push(type);
+  if (adam.history.length > 4) adam.history.shift();
+  adam.nextAttackAt = attack.endAt + rand(...ADAM.attackIntervalMs[adam.phase - 1]) * sp;
+}
+
+// Výbuch (dopad projektilu) + zbylá zóna na zemi
+function adamExplode(kind, x, y, now, hitSet) {
+  const cfg = ADAM.attacks[kind];
+  addAdamFx({ kind: kind === "neural" ? "neural_impact" : "oc_impact", x, y, start: now, until: now + cfg.impactMs });
+  for (const p of alivePlayers()) {
+    if (hitSet.has(p.id)) continue; // jedna instance zasáhne hráče jen jednou
+    if (Math.hypot(p.x - x, p.y - y) <= cfg.impactRadius + 5) {
+      hitSet.add(p.id);
+      hurtPlayer(p, kind === "neural" ? cfg.damage : cfg.impactDamage, now);
+    }
+  }
+  addAdamFx({ kind: kind === "neural" ? "neural_zone" : "oc_zone", x, y, start: now, until: now + cfg.zone.lifeMs, next: new Map() });
+}
+
+function updateAdam(now, dt) {
+  if (!adam.spawned && !adam.defeated && players.size > 0 && difficultyTime >= ADAM.spawnAfterSec) spawnAdam(now);
+  if (!adam.spawned) return;
+
+  // poražený boss chvíli stojí v klidovém stavu a pak zmizí
+  if (adam.state === "defeated") {
+    if (now - adam.defeatedAt > ADAM.defeatedLingerMs) {
+      adam.e.gone = true;
+      adam.spawned = false;
+      adam.e = null;
+    }
+    return;
+  }
+
+  scaleAdamHp();
+  const e = adam.e;
+  const pos = adamPivot();
+
+  // fáze podle zbývajících životů
+  const ratio = e.hp / e.maxHp;
+  const newPhase = ratio <= ADAM.phaseFromRatio[1] ? 3 : ratio <= ADAM.phaseFromRatio[0] ? 2 : 1;
+  if (newPhase > adam.phase) {
+    adam.phase = newPhase;
+    adam.phaseBlinkUntil = Math.max(now, adam.attack ? adam.attack.endAt : now) + ADAM.phaseChangeMs;
+    adam.nextAttackAt = Math.max(adam.nextAttackAt, adam.phaseBlinkUntil + 400);
+    console.log(`  Boss: ${ADAM.phaseNames[newPhase - 1]}`);
+  }
+  adam.state = now < adam.phaseBlinkUntil && !adam.attack ? "phase" : "idle";
+
+  // plánované výstřely běžícího útoku
+  const atk = adam.attack;
+  if (atk) {
+    const cfg = ADAM.attacks[atk.type];
+    if (atk.type === "neural" && !atk.fired && now >= atk.fireAt) {
+      atk.fired = true;
+      const t = players.get(atk.targetId) && players.get(atk.targetId).hp > 0 ? players.get(atk.targetId) : pickAdamTarget();
+      if (t) {
+        const ox = pos.x + cfg.origin.x, oy = pos.y + cfg.origin.y;
+        let dx = t.x - ox, dy = t.y - oy;
+        const d = Math.hypot(dx, dy) || 1;
+        const reach = Math.min(d, cfg.maxRange);
+        const tx = ox + (dx / d) * reach, ty = oy + (dy / d) * reach; // cíl = pozice hráče v okamžiku výstřelu
+        const dur = Math.max(cfg.flightMinMs, Math.min(cfg.flightMaxMs, (reach / cfg.speed) * 1000));
+        addAdamFx({ kind: "neural_mark", x: tx, y: ty, start: now, until: now + dur }); // značka dopadu
+        addAdamFx({
+          kind: "neural_proj", x: ox, y: oy, ox, oy, tx, ty, angle: Math.atan2(ty - oy, tx - ox),
+          start: now, dur, until: now + dur + 50, hit: new Set(), attackId: atk.id,
+        });
+      }
+    }
+    if (atk.type === "overclock") {
+      for (const shot of atk.shots) {
+        if (shot.fired || now < shot.fireAt) continue;
+        shot.fired = true;
+        if (shot.aim) shot.aim.until = now; // varování zmizí, výboj vyletí
+        addAdamFx({
+          kind: "oc_proj", x: pos.x, y: pos.y, angle: shot.angle, start: now, until: now + 5000,
+          traveled: 0, hit: new Set(), attackId: atk.id,
+        });
+      }
+    }
+    if (now >= atk.endAt) adam.attack = null;
+  }
+
+  updateAdamFx(now, dt);
+
+  // další útok
+  if (!adam.attack && now >= adam.nextAttackAt && now >= adam.phaseBlinkUntil) {
+    if (alivePlayers().length > 0) startAdamAttack(now);
+    else adam.nextAttackAt = now + 500; // nikdo nežije -> boss čeká
+  }
+}
+
+// Pohyb projektilů, zásahy a zóny (všechno se počítá z časových razítek, ne z FPS)
+function updateAdamFx(now, dt) {
+  const A = ADAM.attacks;
+  const pos = adamPivot();
+
+  for (const f of adam.fx) {
+    if (f.dead) continue;
+
+    if (f.kind === "neural_proj") {
+      const k = Math.min(1, (now - f.start) / f.dur);
+      f.x = f.ox + (f.tx - f.ox) * k;
+      f.y = f.oy + (f.ty - f.oy) * k;
+      let exploded = false;
+      for (const p of alivePlayers()) {
+        if (!f.hit.has(p.id) && Math.hypot(p.x - f.x, p.y - f.y) <= A.neural.hitRadius + 5) {
+          f.hit.add(p.id); // jeden projektil zasáhne hráče jen jednou
+          hurtPlayer(p, A.neural.damage, now);
+          exploded = true;
+        }
+      }
+      if (exploded || k >= 1) {
+        f.dead = true;
+        adamExplode("neural", f.x, f.y, now, f.hit);
+        for (const m of adam.fx) if (m.kind === "neural_mark" && Math.abs(m.x - f.tx) < 0.01 && Math.abs(m.y - f.ty) < 0.01) m.until = now;
+      }
+    } else if (f.kind === "oc_proj") {
+      f.traveled += A.overclock.speed * dt;
+      f.x = pos.x + Math.cos(f.angle) * f.traveled;
+      f.y = pos.y + Math.sin(f.angle) * f.traveled;
+      let hit = false;
+      for (const p of alivePlayers()) {
+        if (!f.hit.has(p.id) && Math.hypot(p.x - f.x, p.y - f.y) <= A.overclock.hitRadius + 3) {
+          f.hit.add(p.id);
+          hurtPlayer(p, A.overclock.damage, now);
+          hit = true;
+        }
+      }
+      const out = f.x < 8 || f.x > MAP_W * TILE - 8 || f.y < 8 || f.y > MAP_H * TILE - 8;
+      if (hit || out || f.traveled >= A.overclock.maxRange) {
+        f.dead = true;
+        f.x = Math.max(8, Math.min(MAP_W * TILE - 8, f.x));
+        f.y = Math.max(8, Math.min(MAP_H * TILE - 8, f.y));
+        adamExplode("overclock", f.x, f.y, now, f.hit);
+      }
+    } else if (f.kind === "shock") {
+      // prstenec (elipsa) expanduje od středu; zasáhne hráče, přes kterého právě projde
+      if (now >= f.expandStart && now <= f.expandEnd) {
+        const cfg = A.barbell;
+        const s = (now - f.expandStart) / (f.expandEnd - f.expandStart); // 0..1
+        const a = cfg.radius, b = cfg.radius * cfg.aspect;
+        for (const p of alivePlayers()) {
+          if (f.hit.has(p.id)) continue;
+          const rho = Math.hypot((p.x - f.x) / a, (p.y - f.y) / b); // 1 = na okraji prstence
+          if (Math.abs(rho - (0.1 + 0.8 * s)) <= cfg.thickness) {
+            f.hit.add(p.id); // jedna vlna zasáhne hráče nejvýš jednou
+            hurtPlayer(p, cfg.damage, now, { x: f.x, y: f.y }, { knockback: cfg.knockback });
+          }
+        }
+      }
+    } else if (f.kind === "neural_zone" || f.kind === "oc_zone") {
+      const z = f.kind === "neural_zone" ? A.neural.zone : A.overclock.zone;
+      const rx = z.radius ?? z.rx, ry = z.radius ?? z.ry;
+      for (const p of alivePlayers()) {
+        if (Math.hypot((p.x - f.x) / rx, (p.y - f.y) / ry) > 1) continue;
+        p.slowUntil = now + 250; // zpomalení, dokud stojí v zóně
+        p.slowFactor = z.slow;
+        if (z.tickDamage) {
+          // periodické poškození podle časového razítka (nezávisí na FPS)
+          const due = f.next.get(p.id) ?? now + z.graceMs;
+          f.next.set(p.id, due);
+          if (now >= due) {
+            hurtPlayer(p, z.tickDamage, now, null, { invulMs: 400 });
+            f.next.set(p.id, now + z.tickMs);
+          }
+        }
+      }
+    }
+  }
+  adam.fx = adam.fx.filter((f) => !f.dead && f.until > now);
+}
+
 // Společné zranění nepřítele (hrdina i fotograf). Řeší označení, smrt, skóre a loot.
 function hurtEnemy(e, dmg, player, now, knockback) {
   if (e.hp <= 0) return;
@@ -287,8 +622,8 @@ function hurtEnemy(e, dmg, player, now, knockback) {
   e.hp -= dmg;
   e.hitUntil = now + 200;
 
-  if (knockback) {
-    // Odhození nepřítele (knockback)
+  if (knockback && !e.adam) {
+    // Odhození nepřítele (knockback), boss se neodhazuje
     const angle = Math.atan2(e.y - player.y, e.x - player.x);
     e.x += Math.cos(angle) * 22;
     e.y += Math.sin(angle) * 22;
@@ -298,6 +633,7 @@ function hurtEnemy(e, dmg, player, now, knockback) {
 
   if (e.hp <= 1e-6) {
     e.hp = 0;
+    if (e.adam) onAdamDefeated(now);
     player.score = (player.score || 0) + 1;
     e.respawnTimer = 4; // oživí se za 4 vteřiny
 
@@ -370,8 +706,10 @@ function resolveAction(p, now) {
 
     hurtEnemy(e, ab.damage, p, now, false);
     if (a.name === "strong_flash") {
-      e.stunUntil = Math.max(e.stunUntil, now + ab.stunMs);
-      e.slowUntil = Math.max(e.slowUntil, now + ab.stunMs + ab.slowMs);
+      if (!e.adam) { // boss je proti omráčení a zpomalení odolný
+        e.stunUntil = Math.max(e.stunUntil, now + ab.stunMs);
+        e.slowUntil = Math.max(e.slowUntil, now + ab.stunMs + ab.slowMs);
+      }
     } else {
       markEnemy(e, now); // Momentka i Perfektní záběr označují zasažené
     }
@@ -457,6 +795,7 @@ function resetRun(now) {
     });
   }
 
+  resetAdam();
   enemies.length = 0;
   for (let i = 0; i < DIFFICULTY.startEnemies; i++) {
     enemies.push(spawnEnemy(enemyDefIndexForLevel(1, i)));
@@ -510,6 +849,8 @@ wss.on("connection", (ws) => {
         regenAt: 0, // kdy přibude další život z Regenerace
         pendingPicks: 0, // kolik výběrů buffu na hráče čeká
         offer: null, // aktuální nabídka 3 buffů (nebo null)
+        slowUntil: 0, // zpomalení od bosse
+        slowFactor: 1,
         respawnAt: 0, // kdy se mrtvý hráč oživí (Infinity = nikdy, hra končí)
         soloRespawnsUsed: 0, // kolik oživení už využil, když hrál sám
         action: null, // běžící schopnost třídy (Fotograf)
@@ -600,6 +941,7 @@ function broadcastState(now) {
         // za jak dlouho se mrtvý hráč oživí (null = nikdy, hra pro něj končí)
         respawnIn: rest.hp <= 0 && Number.isFinite(respawnAt) ? Math.max(0, respawnAt - now) : null,
         invulnerable: now < rest.invulnerableUntil,
+        slowed: now < rest.slowUntil,
         attacking: now < rest.attackUntil,
         // animace: klient podle toho vybírá snímky (čas od začátku akce posíláme, ne absolutní čas)
         anim: busy ? action.name : rest.moving ? "walk" : "idle",
@@ -616,7 +958,37 @@ function broadcastState(now) {
           : undefined,
       };
     }),
-    enemies: enemies.filter((e) => e.hp > 0).map((e) => ({
+    // Boss Adam: životy, fáze, běžící útok (animace se na klientu počítá z "elapsed") a efekty
+    adam: adam.spawned && adam.e
+      ? {
+          name: ADAM.name,
+          x: adam.e.x, y: adam.e.y,
+          hp: Math.max(0, Math.round(adam.e.hp * 10) / 10),
+          maxHp: Math.round(adam.e.maxHp * 10) / 10,
+          phase: adam.phase,
+          phaseName: ADAM.phaseNames[adam.phase - 1],
+          defeated: adam.state === "defeated",
+          defeatedAgo: adam.state === "defeated" ? now - adam.defeatedAt : 0,
+          blink: adam.state === "phase", // přechod do další fáze: neškodné zablikání
+          hit: now < adam.e.hitUntil,
+          marked: now < adam.e.markedUntil,
+          attack: adam.attack
+            ? { id: adam.attack.id, type: adam.attack.type, elapsed: now - adam.attack.start, speed: adam.attack.speed }
+            : null,
+        }
+      : null,
+    bossFx: adam.fx.map((f) => ({
+      id: f.id,
+      kind: f.kind,
+      x: Math.round(f.x * 10) / 10,
+      y: Math.round(f.y * 10) / 10,
+      angle: f.angle,
+      age: now - f.start,
+      life: f.until - f.start,
+      // jen pro prstenec (shock): časy od začátku útoku, kdy dopadne a expanduje
+      t: f.kind === "shock" ? [f.impactAt - f.start, f.expandStart - f.start, f.expandEnd - f.start] : undefined,
+    })),
+    enemies: enemies.filter((e) => e.hp > 0 && !e.adam).map((e) => ({
       id: e.id,
       type: e.type,
       name: e.name,
@@ -668,7 +1040,7 @@ setInterval(() => {
       level = newLevel;
       console.log(`  Úroveň obtížnosti: ${level}`);
       // nových nepřátel přibude, aby jich bylo tolik, kolik odpovídá úrovni (boss se nepočítá)
-      for (let n = enemies.filter((e) => !e.boss).length; n < enemyCountForLevel(level); n++) {
+      for (let n = enemies.filter((e) => !e.boss && !e.adam).length; n < enemyCountForLevel(level); n++) {
         enemies.push(spawnEnemy(enemyDefIndexForLevel(level, n)));
       }
       if (level >= DIFFICULTY.bossFirstLevel && (level - DIFFICULTY.bossFirstLevel) % DIFFICULTY.bossEvery === 0) {
@@ -679,6 +1051,7 @@ setInterval(() => {
   } else if (level > 1 || difficultyTime > 0) {
     level = 1;
     difficultyTime = 0;
+    resetAdam();
     enemies.length = 0;
     for (let i = 0; i < DIFFICULTY.startEnemies; i++) enemies.push(spawnEnemy(enemyDefIndexForLevel(1, i)));
   }
@@ -716,13 +1089,27 @@ setInterval(() => {
       dy *= Math.SQRT1_2;
     }
 
-    const speed = SPEED * BUFFS.speedMult(p.buffs); // buff Rychlé nohy
+    let speed = SPEED * BUFFS.speedMult(p.buffs); // buff Rychlé nohy
+    if (now < p.slowUntil) speed *= p.slowFactor; // zpomalení v zóně bosse
     p.x += dx * speed * dt;
     p.y += dy * speed * dt;
 
     // nepustit hráče z mapy
     p.x = Math.max(8, Math.min(MAP_W * TILE - 8, p.x));
     p.y = Math.max(8, Math.min(MAP_H * TILE - 2, p.y));
+
+    // do těla bosse se vlézt nedá
+    if (adam.spawned && adam.state !== "defeated") {
+      const bp = adamPivot();
+      const minD = ADAM.bodyRadius + 5;
+      let bx = p.x - bp.x, by = p.y - bp.y;
+      let bd = Math.hypot(bx, by);
+      if (bd < minD) {
+        if (bd < 0.01) { bx = 0; by = 1; bd = 1; }
+        p.x = bp.x + (bx / bd) * minD;
+        p.y = bp.y + (by / bd) * minD;
+      }
+    }
 
     p.moving = dx !== 0 || dy !== 0;
     if (dx < 0) p.dir = "left";
@@ -731,9 +1118,13 @@ setInterval(() => {
     else if (dy > 0) p.dir = "down";
   }
 
+  // 3a2) Boss Adam: spawn, fáze, útoky, projektily a zóny
+  updateAdam(now, dt);
+
   // 3b) AI nepřátel a kolize
   for (const e of enemies) {
     if (e.hp <= 0) {
+      if (e.adam) continue; // Adam se neoživuje, jeho konec řeší updateAdam
       if (e.boss) {
         e.gone = true; // boss se po smrti neoživuje, odstraní se níž
         continue;
@@ -750,6 +1141,8 @@ setInterval(() => {
       }
       continue;
     }
+
+    if (e.adam) continue; // Adam stojí na místě a útočí podle vlastní logiky (updateAdam)
 
     // Najdi nejbližšího živého hráče
     let nearest = null;
@@ -815,6 +1208,19 @@ setInterval(() => {
       e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
     }
 
+    // Slizi nelezou do těla bosse
+    if (adam.spawned && adam.state !== "defeated") {
+      const bp = adamPivot();
+      const minD = ADAM.bodyRadius + (e.size || 10) / 2;
+      let bx = e.x - bp.x, by = e.y - bp.y;
+      let bd = Math.hypot(bx, by);
+      if (bd < minD) {
+        if (bd < 0.01) { bx = 1; by = 0; bd = 1; }
+        e.x = bp.x + (bx / bd) * minD;
+        e.y = bp.y + (by / bd) * minD;
+      }
+    }
+
     e.moving = edx !== 0 || edy !== 0;
     if (Math.abs(edx) > Math.abs(edy)) {
       e.dir = edx > 0 ? "right" : "left";
@@ -828,29 +1234,12 @@ setInterval(() => {
       const dist = Math.hypot(p.x - e.x, p.y - e.y);
       const hitRadius = (e.size || 10) + 6;
 
-      if (!stunned && dist < hitRadius && now > p.invulnerableUntil) {
-        if (p.shield > 0) {
-          p.shield--; // štít zásah zablokuje
-          p.shieldAt = now + BUFFS.SHIELD_RECHARGE_MS;
-        } else {
-          p.hp -= 1;
-        }
-        p.invulnerableUntil = now + 1200; // 1.2s imunita proti další ráně
-
-        // Odhození hráče od nepřítele
-        const angle = Math.atan2(p.y - e.y, p.x - e.x);
-        p.x += Math.cos(angle) * 25;
-        p.y += Math.sin(angle) * 25;
-        p.x = Math.max(8, Math.min(MAP_W * TILE - 8, p.x));
-        p.y = Math.max(8, Math.min(MAP_H * TILE - 2, p.y));
-
-        if (p.hp <= 0) killPlayer(p, now); // ztratil všechny životy
-      }
+      if (!stunned && dist < hitRadius) hurtPlayer(p, 1, now, e, { knockback: 25 });
     }
   }
 
   // Nepřátelé se nesmí slít do jednoho bodu (jinak by hejno vypadalo jako jeden sliz): lehce se odtlačují
-  const aliveEnemies = enemies.filter((e) => e.hp > 0);
+  const aliveEnemies = enemies.filter((e) => e.hp > 0 && !e.adam);
   for (let i = 0; i < aliveEnemies.length; i++) {
     for (let j = i + 1; j < aliveEnemies.length; j++) {
       const a = aliveEnemies[i], b = aliveEnemies[j];

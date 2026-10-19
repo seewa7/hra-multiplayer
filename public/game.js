@@ -18,6 +18,10 @@ let difficultyLevel = 1; // úroveň obtížnosti ze serveru
 let soloMode = false; // hraju sám (omezený počet oživení)
 let soloRespawns = 1; // kolik oživení má hráč, který hraje sám
 let gameOver = null; // po konci hry { remainingMs, survivedMs, results }
+let adamState = null; // boss Adam ze serveru (nebo null)
+let adamAttackId = 0;
+let adamAttackT0 = 0;
+const bossFx = new Map(); // id -> efekt bosse (projektily, varování, zóny)
 const players = new Map(); // id -> { ...data ze serveru, rx, ry (pozice pro kreslení) }
 const enemies = new Map(); // id -> { ...data ze serveru, rx, ry }
 const items = new Map(); // id -> { id, type, x, y }
@@ -44,6 +48,20 @@ ws.onmessage = (e) => {
     soloMode = !!msg.solo;
     soloRespawns = msg.soloRespawns || 1;
     gameOver = msg.gameOver || null;
+
+    // Boss Adam a jeho efekty (server posílá jen to, co se má nakreslit)
+    adamState = msg.adam || null;
+    if (adamState && adamState.attack && adamState.attack.id !== adamAttackId) {
+      adamAttackId = adamState.attack.id;
+      adamAttackT0 = performance.now() - adamState.attack.elapsed; // lokální čas začátku útoku
+    }
+    const seenFx = new Set();
+    for (const f of msg.bossFx || []) {
+      seenFx.add(f.id);
+      const old = bossFx.get(f.id);
+      bossFx.set(f.id, { ...f, t0: old ? old.t0 : performance.now() - f.age, rx: old ? old.rx : f.x, ry: old ? old.ry : f.y });
+    }
+    for (const id of bossFx.keys()) if (!seenFx.has(id)) bossFx.delete(id);
 
     // Aktualizace hráčů
     const seenPlayers = new Set();
@@ -502,6 +520,179 @@ function updateBuffPicker(me) {
   buffPicker.classList.add("show");
 }
 
+// ---------- Boss Adam: sprity, efekty a UI ----------
+// Sheety mají pravidelnou mřížku (boss 724 × 724, VFX 543 × 724), snímky se ořezávají přímo při kreslení.
+// Kotvy (chodidla bosse / střed efektu) jsou v ADAM.anchors, takže boss při změně pózy neposkočí.
+const adamImgs = {};
+let adamLoaded = 0;
+const ADAM_FILES = {
+  neural: "boss-neural.png", barbell: "boss-barbell.png", overclock: "boss-overclock.png",
+  vfxNeural: "vfx-neural.png", vfxShock: "vfx-shockwave.png", vfxOverclock: "vfx-overclock.png",
+};
+for (const [key, file] of Object.entries(ADAM_FILES)) {
+  const img = new Image();
+  img.onload = () => adamLoaded++;
+  img.onerror = () => console.warn("Sprite bosse se nenačetl:", file);
+  img.src = "assets/adam/" + file;
+  adamImgs[key] = img;
+}
+function adam_ready() { return adamLoaded === Object.keys(ADAM_FILES).length; }
+
+const ATTACK_LABELS = { neural: "Neural Network", barbell: "Barbell Shockwave", overclock: "Overclock Cables" };
+
+// Který snímek bosse se má teď ukázat (útok = podle času od začátku, jinak klidová póza podle fáze)
+function adamPose(b, now) {
+  if (b.defeated) return { sheet: "neural", frame: 0 };
+  if (b.attack) {
+    const cfg = ADAM.attacks[b.attack.type];
+    let t = (now - adamAttackT0) / b.attack.speed; // čas v základních ms (útok ve fázi 3 běží rychleji)
+    if (b.attack.type === "barbell") {
+      t -= cfg.telegraphMs;
+      if (t < 0) return { sheet: "barbell", frame: 0 }; // varovný kruh, boss zvedá činku
+    }
+    let frame = cfg.frames.length - 1;
+    for (let i = 0; i < cfg.frames.length; i++) {
+      if (t < cfg.frames[i]) { frame = i; break; }
+      t -= cfg.frames[i];
+    }
+    return { sheet: b.attack.type, frame };
+  }
+  return { sheet: ["neural", "barbell", "overclock"][b.phase - 1], frame: 0 };
+}
+
+function drawAdam(ctx, b, now) {
+  const pose = adamPose(b, now);
+  const [ax, ay] = ADAM.anchors[pose.sheet][pose.frame];
+  const S = ADAM.scale.boss, C = ADAM.bossCell;
+  const x = Math.round(b.x), y = Math.round(b.y);
+
+  // stín
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath();
+  ctx.ellipse(x, y, 20, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // poražený boss se pomalu ztrácí; při přechodu do další fáze bliká
+  ctx.save();
+  if (b.defeated) ctx.globalAlpha = Math.max(0.25, 1 - b.defeatedAgo / (ADAM.defeatedLingerMs * 1.2));
+  const flash = b.hit || (b.blink && Math.floor(now / 90) % 2 === 0);
+  if (flash) ctx.filter = "brightness(1.9)";
+  ctx.drawImage(adamImgs[pose.sheet], pose.frame * C, 0, C, C, Math.round(x - ax * S), Math.round(y - ay * S), C * S, C * S);
+  ctx.restore();
+
+  // označený (Fotograf) boss má nad sebou žlutou šipku
+  if (b.marked) {
+    const by = y - 56 + Math.round(Math.sin(now / 120));
+    ctx.fillStyle = "#000"; ctx.fillRect(x - 3, by - 1, 7, 1); ctx.fillRect(x - 2, by, 5, 1); ctx.fillRect(x - 1, by + 1, 3, 1); ctx.fillRect(x, by + 2, 1, 1);
+    ctx.fillStyle = "#ffe14d"; ctx.fillRect(x - 2, by - 1, 5, 1); ctx.fillRect(x - 1, by, 3, 1); ctx.fillRect(x, by + 1, 1, 1);
+  }
+}
+
+// Nakreslí snímek VFX se středem v (x, y), případně otočený (0 = doprava) a průhledný
+function drawVfx(ctx, sheet, frame, x, y, scale, angle = 0, alpha = 1) {
+  const img = adamImgs[sheet];
+  const [ax, ay] = ADAM.anchors[sheet][frame];
+  const W = ADAM.vfxCell, H = ADAM.vfxCellH;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(Math.round(x), Math.round(y));
+  if (angle) ctx.rotate(angle);
+  ctx.drawImage(img, frame * W, 0, W, H, -ax * scale, -ay * scale, W * scale, H * scale);
+  ctx.restore();
+}
+
+// Zóna dohasíná: posledních 500 ms bliká
+const zoneAlpha = (age, life, now) => (life - age < 500 ? (Math.floor(now / 70) % 2 ? 0.35 : 0.9) : 0.65 + 0.25 * Math.sin(now / 160));
+
+function drawBossGroundFx(ctx, now) {
+  if (!adam_ready()) return;
+  const A = ADAM.attacks;
+  for (const f of bossFx.values()) {
+    const age = now - f.t0;
+    if (f.kind === "shock") {
+      // varovný kruh -> centrální náraz -> expandující prstenec -> rozpad (časy dostaneme ze serveru)
+      const [impact, expandStart, expandEnd] = f.t;
+      const frame = age < impact ? 0 : age < expandStart ? 1 : age < expandEnd ? 2 : 3;
+      const alpha = frame === 0 ? 0.55 + 0.35 * Math.sin(age / 70) : 1;
+      drawVfx(ctx, "vfxShock", frame, f.x, f.y, ADAM.scale.barbell, 0, alpha);
+    } else if (f.kind === "oc_aim") {
+      // varovný pruh na zemi ve směru výstřelu; těsně před výstřelem bliká rychleji
+      const left = f.life - age;
+      const on = left > 150 ? Math.floor(now / 110) % 2 === 0 : Math.floor(now / 50) % 2 === 0;
+      ctx.save();
+      ctx.translate(f.x, f.y);
+      ctx.rotate(f.angle);
+      const len = A.overclock.maxRange, w = A.overclock.lineWidth;
+      ctx.fillStyle = on ? "rgba(255, 40, 60, 0.38)" : "rgba(0, 235, 255, 0.28)";
+      ctx.fillRect(0, -w / 2, len, w);
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      for (let d = 0; d < len; d += 16) ctx.fillRect(d, -1, 8, 2); // čárkovaná osa
+      ctx.restore();
+    } else if (f.kind === "neural_mark") {
+      // značka dopadu neuronového projektilu
+      const r = A.neural.impactRadius + 5;
+      ctx.save();
+      ctx.strokeStyle = `rgba(60, 255, 190, ${0.55 + 0.35 * Math.sin(now / 60)})`;
+      ctx.fillStyle = "rgba(60, 255, 190, 0.14)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    } else if (f.kind === "neural_zone" && age >= A.neural.impactMs) {
+      drawVfx(ctx, "vfxNeural", 3, f.x, f.y, ADAM.scale.neural, 0, zoneAlpha(age, f.life, now));
+    } else if (f.kind === "oc_zone" && age >= A.overclock.impactMs) {
+      drawVfx(ctx, "vfxOverclock", 3, f.x, f.y, ADAM.scale.overclock, 0, zoneAlpha(age, f.life, now));
+    }
+  }
+}
+
+function drawBossAirFx(ctx, now) {
+  if (!adam_ready()) return;
+  const A = ADAM.attacks;
+  for (const f of bossFx.values()) {
+    const age = now - f.t0;
+    // plynulý pohyb projektilů mezi zprávami ze serveru
+    f.rx += (f.x - f.rx) * Math.min(1, 0.5);
+    f.ry += (f.y - f.ry) * Math.min(1, 0.5);
+    if (f.kind === "neural_proj") {
+      drawVfx(ctx, "vfxNeural", age < A.neural.spawnMs ? 0 : 1, f.rx, f.ry, ADAM.scale.neural, age < A.neural.spawnMs ? 0 : f.angle);
+    } else if (f.kind === "neural_impact") {
+      drawVfx(ctx, "vfxNeural", 2, f.x, f.y, ADAM.scale.neural);
+    } else if (f.kind === "oc_proj") {
+      drawVfx(ctx, "vfxOverclock", age < A.overclock.spawnMs ? 0 : 1, f.rx, f.ry, ADAM.scale.overclock, f.angle);
+    } else if (f.kind === "oc_impact") {
+      drawVfx(ctx, "vfxOverclock", 2, f.x, f.y, ADAM.scale.overclock);
+    }
+  }
+}
+
+const bossBar = document.getElementById("bossBar");
+const bossName = document.getElementById("bossName");
+const bossSub = document.getElementById("bossSub");
+const bossFill = document.getElementById("bossFill");
+const bossHp = document.getElementById("bossHp");
+const victoryBox = document.getElementById("victory");
+
+function updateBossUi() {
+  const b = adamState;
+  if (!b) {
+    bossBar.classList.remove("show");
+    victoryBox.classList.remove("show");
+    return;
+  }
+  bossBar.classList.add("show");
+  bossName.textContent = b.name;
+  bossFill.style.width = (b.maxHp ? (b.hp / b.maxHp) * 100 : 0) + "%";
+  bossHp.textContent = `${Math.ceil(b.hp)} / ${Math.ceil(b.maxHp)}`;
+  bossSub.textContent = b.defeated
+    ? "Poražen"
+    : b.phaseName + (b.attack ? `  ·  ${ATTACK_LABELS[b.attack.type]}` : b.blink ? "  ·  mění fázi…" : "");
+  victoryBox.classList.toggle("show", b.defeated);
+}
+
 // ---------- Smrt a konec hry ----------
 const deathBanner = document.getElementById("deathBanner");
 const deathSub = document.getElementById("deathSub");
@@ -645,13 +836,18 @@ function frame(now) {
     ...[...players.values()].filter((p) => !p.dead).map((p) => ({ type: "player", obj: p, y: p.ry })),
     ...[...enemies.values()].map((e) => ({ type: "enemy", obj: e, y: e.ry })),
     ...[...items.values()].map((it) => ({ type: "item", obj: it, y: it.y })),
+    ...(adamState && adam_ready() ? [{ type: "adam", obj: adamState, y: adamState.y }] : []),
   ].sort((a, b) => a.y - b.y);
 
   const walk = [1, 0, 2, 0][Math.floor(now / 120) % 4];
   const slimeAnim = Math.floor(now / 180) % 2;
 
+  drawBossGroundFx(ctx, now); // varování, prstenec a zóny na zemi (pod postavami)
+
   for (const item of renderables) {
-    if (item.type === "player") {
+    if (item.type === "adam") {
+      drawAdam(ctx, item.obj, now);
+    } else if (item.type === "player") {
       const p = item.obj;
       const x = Math.round(p.rx), y = Math.round(p.ry);
 
@@ -745,6 +941,8 @@ function frame(now) {
     }
   }
 
+  drawBossAirFx(ctx, now); // letící projektily nad postavami
+
   // Texty a jména (v normálním rozlišení pro ostrý text)
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -816,6 +1014,7 @@ function frame(now) {
   updateBuffPicker(me);
   updateXpBar(me);
   updateDeathUi(me);
+  updateBossUi();
 
   requestAnimationFrame(frame);
 }
