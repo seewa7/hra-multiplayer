@@ -58,6 +58,13 @@ Klient jen pošle záměr (`attack` / `ability`), o zásahu, poškození a coold
 Znovu se vyrobí příkazem `python3 tools/build_photographer_atlas.py` (potřebuje `pip3 install pillow numpy scipy`).
 Velikost postavy ve hře se mění konstantou `PHOTO_SCALE` v `public/game.js`.
 
+## Obtížnost
+
+Hra začíná klidně (2 zelení slizi, nepřátelé se neobjevují blízko hráčů, nový hráč je 3 s nezranitelný)
+a každých 45 s stoupne úroveň (max. 10): přibývají nepřátelé (až 8), jsou rychlejší a vidí hráče z větší dálky,
+od 3. úrovně přibývají Ohniví slizi a od 5. Obří slizi. Když hru všichni opustí, začne se znovu od 1. úrovně.
+Všechna čísla jsou v objektu `DIFFICULTY` nahoře v `server.js`.
+
 ## Soubory
 
 | Soubor | Co dělá |
