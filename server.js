@@ -294,7 +294,8 @@ function startAbility(p, name, now) {
   p.action = {
     id: ++p.actionSeq,
     name,
-    dir: p.dir, // směr se uzamkne po celou animaci
+    dir: p.dir, // směr animace se uzamkne po celou animaci
+    roots: ab.roots !== false, // jestli postava během animace stojí (základní útok ne)
     start: now,
     hitAt: now + sum(ab.frames.slice(0, ab.hitFrame)),
     endAt: now + sum(ab.frames),
@@ -650,9 +651,9 @@ setInterval(() => {
       p.action.resolved = true;
       resolveAction(p, now);
     }
-    if (p.action && now < p.action.endAt) {
+    if (p.action && p.action.roots && now < p.action.endAt) {
       p.moving = false;
-      continue; // směr i pozice jsou uzamčené do konce animace
+      continue; // schopnost Q / E: pozice i směr jsou uzamčené do konce animace
     }
 
     let dx = 0, dy = 0;

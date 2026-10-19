@@ -43,6 +43,8 @@ Obecná pravidla (větve, PR, revize) jsou v `AGENTS.md`, tady jsou jen pravidla
    Pokud chceš buff jen pro svou třídu, nejdřív to domluv v týmu a přidej filtr do `nextOffer` ve vlastním PR.
 10. **Základní útok (Mezerník / klik) každé třídy zasahuje dokola (360°)** – je jedno, kam se postava dívá.
     Dosah se počítá od středu postavy. Směr smí hrát roli jen u dalších schopností (Q / E).
+    **Základní útok postavu nezastavuje** – během něj jde dál chodit (v definici `roots: false`).
+    Zastavit postavu smí jen schopnosti Q / E.
 11. **Nerozbij hrdinu ani ostatní třídy.** Po změně vyzkoušej, že původní třídy fungují stejně jako dřív.
 
 ## Vyváženost (hrubé mantinely)
