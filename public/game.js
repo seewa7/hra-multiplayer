@@ -44,8 +44,11 @@ ws.onmessage = (e) => {
     for (const p of msg.players) {
       seenPlayers.add(p.id);
       const old = players.get(p.id);
+      // animT0 = lokální čas, kdy akce začala (server posílá jen "kolik ms už uběhlo",
+      // takže se nemusí řešit rozdíl hodin mezi počítači)
+      const animT0 = p.animId ? (old && old.animId === p.animId ? old.animT0 : performance.now() - p.animElapsed) : 0;
       // rx/ry = kde hráče kreslíme; plynule se posouvá za skutečnou pozicí
-      players.set(p.id, { ...p, rx: old ? old.rx : p.x, ry: old ? old.ry : p.y });
+      players.set(p.id, { ...p, animT0, rx: old ? old.rx : p.x, ry: old ? old.ry : p.y });
     }
     for (const id of players.keys()) if (!seenPlayers.has(id)) players.delete(id);
 
@@ -80,12 +83,19 @@ function send(msg) {
 const joinScreen = document.getElementById("join");
 const nameInput = document.getElementById("nameInput");
 nameInput.value = localStorage.getItem("jmeno") || "";
+{
+  const saved = localStorage.getItem("trida");
+  const radio = saved && document.querySelector(`input[name="cls"][value="${saved}"]`);
+  if (radio) radio.checked = true;
+}
 
 document.getElementById("joinForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const name = nameInput.value.trim() || "Hráč";
   try { localStorage.setItem("jmeno", name); } catch {}
-  const join = () => send({ type: "join", name });
+  const cls = document.querySelector('input[name="cls"]:checked').value;
+  try { localStorage.setItem("trida", cls); } catch {}
+  const join = () => send({ type: "join", name, cls });
   ws.readyState === WebSocket.OPEN ? join() : ws.addEventListener("open", join);
   joinScreen.style.display = "none";
 });
@@ -108,7 +118,15 @@ function setKey(code, pressed) {
   }
   return true;
 }
+// Schopnosti třídy: klávesa -> slot (server rozhodne, jestli a co se stane)
+const ABILITY_KEYS = { KeyQ: "q", KeyE: "e" };
+
 addEventListener("keydown", (e) => {
+  if (ABILITY_KEYS[e.code] && myId !== null) {
+    if (!e.repeat) send({ type: "ability", slot: ABILITY_KEYS[e.code] });
+    e.preventDefault();
+    return;
+  }
   if (e.code === "Space" && myId !== null) {
     send({ type: "attack" });
     e.preventDefault();
@@ -201,6 +219,91 @@ function getSprite(color, dir, legs) {
   });
   spriteCache.set(key, c);
   return c;
+}
+
+// ---------- Fotograf (spritesheety) ----------
+// Atlasy vyrábí tools/build_photographer_atlas.py (kotva = střed chodidel je ve všech
+// snímcích na stejném místě, takže postava při změně animace neposkočí).
+const PHOTO_SCALE = 0.09; // kolik pixelů mapy odpovídá jednomu pixelu obrázku (jen měřítko)
+const WALK_FRAME_MS = 100;
+const DIR_ROW = { down: 0, left: 1, right: 2, up: 3 };
+const photo = { ready: false, sheets: {} };
+
+fetch("assets/photographer/atlas.json")
+  .then((r) => r.json())
+  .then((atlas) =>
+    Promise.all(
+      Object.entries(atlas.sheets).map(
+        ([name, sh]) =>
+          new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+              photo.sheets[name] = { ...sh, img };
+              resolve();
+            };
+            img.onerror = reject;
+            img.src = "assets/photographer/" + sh.file;
+          })
+      )
+    )
+  )
+  .then(() => {
+    photo.ready = true;
+    drawThumb("thumb-photographer", () => photoFrame("walk", 0, "down"));
+  })
+  .catch((err) => console.warn("Sprity Fotografa se nenačetly, kreslí se základní postava:", err));
+
+// Vrací { img, sx, sy, sw, sh, ax, ay } pro daný snímek
+function photoFrame(sheetName, frame, dir) {
+  const sh = photo.sheets[sheetName];
+  return {
+    img: sh.img,
+    sx: frame * sh.cellW,
+    sy: DIR_ROW[dir] * sh.cellH,
+    sw: sh.cellW,
+    sh: sh.cellH,
+    ax: sh.anchorX,
+    ay: sh.anchorY,
+  };
+}
+
+// Který snímek se má teď ukázat (stav -> sheet + číslo snímku)
+function photographerFrame(p, now) {
+  const dir = p.animDir || p.dir;
+  if (p.anim === "idle") return photoFrame("walk", 0, dir);
+  if (p.anim === "walk") return photoFrame("walk", Math.floor(now / WALK_FRAME_MS) % 6, dir);
+
+  // útok: snímek podle času od začátku akce (časování je ve shared/classes.js)
+  const timing = CLASSES.photographer.abilities[p.anim].frames;
+  let t = now - p.animT0;
+  let frame = timing.length - 1;
+  for (let i = 0; i < timing.length; i++) {
+    if (t < timing[i]) { frame = i; break; }
+    t -= timing[i];
+  }
+  return photoFrame(p.anim, frame, dir);
+}
+
+function drawPhotographer(ctx, p, x, y, now) {
+  const f = photographerFrame(p, now);
+  ctx.drawImage(
+    f.img, f.sx, f.sy, f.sw, f.sh,
+    Math.round(x - f.ax * PHOTO_SCALE), Math.round(y - f.ay * PHOTO_SCALE),
+    f.sw * PHOTO_SCALE, f.sh * PHOTO_SCALE
+  );
+}
+
+// Náhledy tříd na přihlašovací obrazovce
+function drawThumb(canvasId, getFrame) {
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  const g = c.getContext("2d");
+  g.imageSmoothingEnabled = false;
+  g.clearRect(0, 0, c.width, c.height);
+  const f = getFrame();
+  const k = Math.min((c.height - 6) / f.sh, 1) * (f.thumbScale || 1);
+  const w = f.sw * k, h = f.sh * k;
+  g.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, c.width / 2 - f.ax * k, c.height - 4 - f.ay * k, w, h);
 }
 
 // ---------- Nepřátelé (Slizouni - pixel art) ----------
@@ -394,7 +497,11 @@ function frame(now) {
       if (p.invulnerable && Math.floor(now / 100) % 2 === 0) {
         ctx.globalAlpha = 0.4;
       }
-      ctx.drawImage(getSprite(p.color, p.dir, p.moving ? walk : 0), x - 5, y - 14);
+      if (p.cls === "photographer" && photo.ready) {
+        drawPhotographer(ctx, p, x, y, now);
+      } else {
+        ctx.drawImage(getSprite(p.color, p.dir, p.moving ? walk : 0), x - 5, y - 14);
+      }
       ctx.globalAlpha = 1.0;
 
       // vizuální efekt útoku
@@ -413,6 +520,27 @@ function frame(now) {
 
       // tělo slizu
       ctx.drawImage(sprite, ex - Math.floor(sw / 2), ey - sprite.height);
+
+      // Fotograf: označený nepřítel má nad sebou žlutou šipku, omráčený kroužící hvězdičky
+      if (en.marked) {
+        const by = ey - sprite.height - (en.hp < en.maxHp ? 10 : 6) + Math.round(Math.sin(now / 120));
+        ctx.fillStyle = "#000";
+        ctx.fillRect(ex - 3, by - 1, 7, 1);
+        ctx.fillRect(ex - 2, by, 5, 1);
+        ctx.fillRect(ex - 1, by + 1, 3, 1);
+        ctx.fillRect(ex, by + 2, 1, 1);
+        ctx.fillStyle = "#ffe14d";
+        ctx.fillRect(ex - 2, by - 1, 5, 1);
+        ctx.fillRect(ex - 1, by, 3, 1);
+        ctx.fillRect(ex, by + 1, 1, 1);
+      }
+      if (en.stunned) {
+        ctx.fillStyle = "#fff";
+        for (let i = 0; i < 3; i++) {
+          const a = now / 150 + (i * Math.PI * 2) / 3;
+          ctx.fillRect(Math.round(ex + Math.cos(a) * 6), Math.round(ey - sprite.height - 2 + Math.sin(a) * 2), 1, 1);
+        }
+      }
 
       // malý ukazatel životů nepřítele (pokud je zraněný)
       if (en.hp < en.maxHp) {
@@ -445,7 +573,7 @@ function frame(now) {
   ctx.lineWidth = 3;
   for (const p of players.values()) {
     const sx = (Math.round(p.rx) - camX) * scale;
-    const sy = (Math.round(p.ry) - camY - 16) * scale;
+    const sy = (Math.round(p.ry) - camY - (p.cls === "photographer" ? 24 : 16)) * scale;
     ctx.strokeStyle = "#000";
     ctx.strokeText(p.name, sx, sy);
     ctx.fillStyle = p.id === myId ? "#ffeb3b" : "#fff";
@@ -469,7 +597,15 @@ function frame(now) {
     if (me) {
       const hearts = "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
       hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
-      hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok  |  🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)\n\n`;
+      if (me.cls === "photographer") {
+        const ab = CLASSES.photographer.abilities;
+        const cd = (name) => (me.cd && me.cd[name] > 0 ? (me.cd[name] / 1000).toFixed(1) + " s" : "připraveno");
+        hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] ${ab.snapshot.label}\n`;
+        hudText += `[Q] ${ab.strong_flash.label}: ${cd("strong_flash")}   [E] ${ab.perfect_shot.label}: ${cd("perfect_shot")}\n`;
+        hudText += `🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)\n\n`;
+      } else {
+        hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok  |  🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)\n\n`;
+      }
     }
     hudText += `Žebříček:\n`;
     hudText += [...players.values()]
@@ -482,3 +618,8 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// náhled Hrdiny na přihlašovací obrazovce
+drawThumb("thumb-hero", () => ({
+  img: getSprite("#e74c3c", "down", 0), sx: 0, sy: 0, sw: 10, sh: 14, ax: 5, ay: 14, thumbScale: 3.4,
+}));

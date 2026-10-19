@@ -11,7 +11,9 @@ je v `README.md`.
 
 - `server.js` – server: HTTP pro soubory, WebSocket, herní smyčka (30 tiků/s)
 - `public/game.js` – klient: ovládání, kreslení
-- `public/index.html` – stránka a přihlašovací okno
+- `public/index.html` – stránka, přihlašovací okno a výběr třídy
+- `public/shared/classes.js` – definice tříd (časování animací, cooldowny, dosahy, poškození); načítá ho server i prohlížeč, takže jsou čísla na jednom místě
+- `public/assets/` – obrázky (atlasy generuje `tools/build_photographer_atlas.py` ze zdrojů v `assets-src/`)
 - Jediná závislost je `ws`. Nepřidávej další knihovny ani build krok bez domluvy v týmu.
 
 ## Git workflow (nejdůležitější část)
@@ -54,7 +56,7 @@ je v `README.md`.
 - **Server je šéf.** Pozice, body, srážky a další herní stav se počítají jen na
   serveru. Klient posílá pouze vstup (klávesy, akce) a kreslí, co dostane. Nikdy
   nedůvěřuj datům od klienta (kontroluj typy a rozsahy, viz `server.js`).
-- **Protokol zpráv** (`join`, `input`, `welcome`, `state`) je sdílený kontrakt mezi
+- **Protokol zpráv** (`join`, `input`, `attack`, `ability`, `welcome`, `state`) je sdílený kontrakt mezi
   `server.js` a `public/game.js`. Když ho měníš, uprav obě strany v jednom PR
   a popiš změnu v popisu PR.
 - **Sdílené konstanty** (`TILE`, `MAP_W`, `MAP_H`) jsou zkopírované v obou souborech

@@ -1,0 +1,46 @@
+{
+  "dirs": [
+    "down",
+    "left",
+    "right",
+    "up"
+  ],
+  "sheets": {
+    "walk": {
+      "file": "walk.png",
+      "cols": 6,
+      "rows": 4,
+      "cellW": 188,
+      "cellH": 235,
+      "anchorX": 94,
+      "anchorY": 225
+    },
+    "snapshot": {
+      "file": "snapshot.png",
+      "cols": 3,
+      "rows": 4,
+      "cellW": 282,
+      "cellH": 251,
+      "anchorX": 141,
+      "anchorY": 241
+    },
+    "strong_flash": {
+      "file": "strong_flash.png",
+      "cols": 3,
+      "rows": 4,
+      "cellW": 312,
+      "cellH": 280,
+      "anchorX": 156,
+      "anchorY": 270
+    },
+    "perfect_shot": {
+      "file": "perfect_shot.png",
+      "cols": 3,
+      "rows": 4,
+      "cellW": 556,
+      "cellH": 322,
+      "anchorX": 278,
+      "anchorY": 290
+    }
+  }
+}

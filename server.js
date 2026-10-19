@@ -10,6 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { WebSocketServer } = require("ws");
+const CLASSES = require("./public/shared/classes.js"); // sdílené s klientem
 
 const PORT = 3000;
 const TICK_RATE = 30; // kolikrát za sekundu se hra přepočítá
@@ -135,6 +136,9 @@ function spawnEnemy(defIndex) {
     wanderTimer: 0,
     hitUntil: 0,
     respawnTimer: 0,
+    markedUntil: 0, // Fotograf: označený nepřítel dostává víc poškození
+    stunUntil: 0, // omráčený (oslepený) nepřítel se nehýbe a nekouše
+    slowUntil: 0, // zpomalený nepřítel
   };
 }
 
@@ -176,6 +180,96 @@ for (let i = 0; i < 6; i++) {
   spawnRandomItem();
 }
 
+// Společné zranění nepřítele (hrdina i fotograf). Řeší označení, smrt, skóre a loot.
+function hurtEnemy(e, dmg, player, now, knockback) {
+  if (e.hp <= 0) return;
+  if (now < e.markedUntil) dmg *= CLASSES.MARK_BONUS;
+  e.hp -= dmg;
+  e.hitUntil = now + 200;
+
+  if (knockback) {
+    // Odhození nepřítele (knockback)
+    const angle = Math.atan2(e.y - player.y, e.x - player.x);
+    e.x += Math.cos(angle) * 22;
+    e.y += Math.sin(angle) * 22;
+    e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
+    e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+  }
+
+  if (e.hp <= 1e-6) {
+    e.hp = 0;
+    player.score = (player.score || 0) + 1;
+    e.respawnTimer = 4; // oživí se za 4 vteřiny
+
+    // Šance na vypadnutí lootu z poraženého nepřítele
+    if (Math.random() < ENEMY_DROP_CHANCE) {
+      const dropType = Math.random() < COIN_CHANCE_DROP ? "coin" : "heart";
+      spawnItem(dropType, e.x, e.y);
+    }
+  }
+}
+
+function markEnemy(e, now) {
+  if (e.hp > 0) e.markedUntil = now + CLASSES.MARK_MS; // obnoví čas, bonus se nesčítá
+}
+
+// ---------- Schopnosti Fotografa ----------
+const FACING = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] };
+const sum = (arr) => arr.reduce((a, b) => a + b, 0);
+
+// Spustí schopnost (animaci). Zásah se projeví až ve správném snímku – viz resolveAction.
+function startAbility(p, name, now) {
+  const ab = CLASSES[p.cls] && CLASSES[p.cls].abilities[name];
+  if (!ab || p.hp <= 0) return;
+  if (p.action && now < p.action.endAt) return; // předchozí animace ještě běží
+  if (now < p.cooldowns[name]) return; // cooldown
+
+  p.cooldowns[name] = now + ab.cooldown;
+  p.action = {
+    id: ++p.actionSeq,
+    name,
+    dir: p.dir, // směr se uzamkne po celou animaci
+    start: now,
+    hitAt: now + sum(ab.frames.slice(0, ab.hitFrame)),
+    endAt: now + sum(ab.frames),
+    resolved: false,
+  };
+}
+
+// Vyhodnotí zásah schopnosti – volá se jednou, když animace dojde na "zásahový" snímek.
+function resolveAction(p, now) {
+  const a = p.action;
+  const ab = CLASSES[p.cls].abilities[a.name];
+  const [fx, fy] = FACING[a.dir];
+
+  for (const e of enemies) {
+    if (e.hp <= 0) continue;
+    const vx = e.x - p.x;
+    const vy = e.y - p.y;
+    const dist = Math.hypot(vx, vy);
+    const reach = (e.size || 10) / 2;
+
+    if (a.name === "snapshot" || a.name === "strong_flash") {
+      // kužel před postavou: dosah + úhel
+      if (dist > ab.range + reach) continue;
+      if (dist > 6 && (vx * fx + vy * fy) / dist < ab.minDot) continue;
+    } else if (a.name === "perfect_shot") {
+      // dlouhý úzký paprsek ve směru postavy
+      const along = vx * fx + vy * fy;
+      const across = Math.abs(vx * fy - vy * fx);
+      if (along < -reach || along > ab.length + reach || across > ab.halfWidth + reach) continue;
+    }
+
+    hurtEnemy(e, ab.damage, p, now, false);
+    if (a.name === "strong_flash") {
+      e.stunUntil = Math.max(e.stunUntil, now + ab.stunMs);
+      e.slowUntil = Math.max(e.slowUntil, now + ab.stunMs + ab.slowMs);
+    } else {
+      markEnemy(e, now); // Momentka i Perfektní záběr označují zasažené
+    }
+  }
+}
+
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -195,9 +289,11 @@ wss.on("connection", (ws) => {
     // Hráč se připojuje se jménem
     if (msg.type === "join" && !player) {
       const name = String(msg.name || "Hráč").trim().slice(0, 16) || "Hráč";
+      const cls = msg.cls === "photographer" ? "photographer" : "hero"; // klient nesmí poslat nic jiného
       player = {
         id,
         name,
+        cls,
         color: COLORS[(id - 1) % COLORS.length],
         x: (MAP_W * TILE) / 2 + (Math.random() - 0.5) * 100,
         y: (MAP_H * TILE) / 2 + (Math.random() - 0.5) * 100,
@@ -210,6 +306,9 @@ wss.on("connection", (ws) => {
         invulnerableUntil: Date.now() + DIFFICULTY.joinProtectionMs, // chvíli po vstupu nezranitelný
         attackUntil: 0,
         lastAttack: 0,
+        action: null, // běžící schopnost třídy (Fotograf)
+        actionSeq: 0,
+        cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
       };
       players.set(id, player);
       send(ws, { type: "welcome", id });
@@ -229,7 +328,9 @@ wss.on("connection", (ws) => {
     // Hráč zaútočil (klávesa Space nebo klik myší)
     if (msg.type === "attack" && player && player.hp > 0) {
       const now = Date.now();
-      if (now - player.lastAttack > 300) {
+      if (player.cls === "photographer") {
+        startAbility(player, "snapshot", now); // základní útok Fotografa
+      } else if (now - player.lastAttack > 300) {
         player.lastAttack = now;
         player.attackUntil = now + 180;
 
@@ -244,30 +345,18 @@ wss.on("connection", (ws) => {
         for (const e of enemies) {
           if (e.hp <= 0) continue;
           const dist = Math.hypot(e.x - ax, e.y - ay);
-          if (dist < 22) {
-            e.hp -= 1;
-            e.hitUntil = now + 200;
-
-            // Odhození nepřítele (knockback)
-            const angle = Math.atan2(e.y - player.y, e.x - player.x);
-            e.x += Math.cos(angle) * 22;
-            e.y += Math.sin(angle) * 22;
-            e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
-            e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
-
-            if (e.hp <= 0) {
-              player.score = (player.score || 0) + 1;
-              e.respawnTimer = 4; // oživí se za 4 vteřiny
-
-              // Šance na vypadnutí lootu z poraženého nepřítele
-              if (Math.random() < ENEMY_DROP_CHANCE) {
-                const dropType = Math.random() < COIN_CHANCE_DROP ? "coin" : "heart";
-                spawnItem(dropType, e.x, e.y);
-              }
-            }
-          }
+          // sliz, který se tě dotýká, jde zasáhnout z jakékoliv strany (i když je vedle nebo za tebou)
+          const touching = Math.hypot(e.x - player.x, e.y - player.y) < (e.size || 10) + 8;
+          if (dist < 22 || touching) hurtEnemy(e, 1, player, now, true);
         }
       }
+    }
+
+    // Schopnost třídy na klávesách Q / E (zatím jen Fotograf)
+    if (msg.type === "ability" && player && player.hp > 0 && player.cls === "photographer") {
+      const abilities = CLASSES.photographer.abilities;
+      const name = Object.keys(abilities).find((n) => abilities[n].slot === msg.slot && msg.slot !== "attack");
+      if (name) startAbility(player, name, Date.now());
     }
   });
 
@@ -306,6 +395,16 @@ setInterval(() => {
 
   // 3a) Pohyb hráčů
   for (const p of players.values()) {
+    // schopnost Fotografa: zásah ve správném snímku animace a po dobu animace stojí
+    if (p.action && !p.action.resolved && now >= p.action.hitAt) {
+      p.action.resolved = true;
+      resolveAction(p, now);
+    }
+    if (p.action && now < p.action.endAt) {
+      p.moving = false;
+      continue; // směr i pozice jsou uzamčené do konce animace
+    }
+
     let dx = 0, dy = 0;
     if (p.input.left) dx -= 1;
     if (p.input.right) dx += 1;
@@ -339,6 +438,7 @@ setInterval(() => {
       if (e.respawnTimer <= 0) {
         // Respawn na náhodném místě
         e.hp = e.maxHp;
+        e.markedUntil = e.stunUntil = e.slowUntil = 0;
         Object.assign(e, safeSpawnPosition());
       }
       continue;
@@ -359,8 +459,15 @@ setInterval(() => {
     let edx = 0, edy = 0;
     const t = (level - 1) / (DIFFICULTY.maxLevel - 1); // 0 na 1. úrovni, 1 na nejvyšší
     const CHASE_RADIUS = DIFFICULTY.chaseStart + (DIFFICULTY.chaseEnd - DIFFICULTY.chaseStart) * t;
+    const stunned = now < e.stunUntil;
+    const speed =
+      e.speed *
+      (1 + DIFFICULTY.speedPerLevel * (level - 1)) * // rychlejší s úrovní obtížnosti
+      (now < e.slowUntil ? CLASSES.photographer.abilities.strong_flash.slowFactor : 1); // zpomalení od Fotografa
 
-    if (nearest && minDist < CHASE_RADIUS) {
+    if (stunned) {
+      // omráčený (oslepený) nepřítel stojí
+    } else if (nearest && minDist < CHASE_RADIUS) {
       // Pronásledování hráče
       const angle = Math.atan2(nearest.y - e.y, nearest.x - e.x);
       edx = Math.cos(angle);
@@ -381,12 +488,27 @@ setInterval(() => {
       edy = e.wanderDir.y;
     }
 
-    const speed = e.speed * (1 + DIFFICULTY.speedPerLevel * (level - 1));
     e.x += edx * speed * dt;
     e.y += edy * speed * dt;
 
     e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
     e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+
+    // Nepřítel nemůže projít skrz hráče: když se s ním překrývá, vytlačí se ven.
+    // (bodyDist je menší než hitRadius níž, takže se hráče pořád dotkne a kousne)
+    const bodyDist = (e.size || 10) + 4;
+    for (const p of players.values()) {
+      if (p.hp <= 0) continue;
+      let ox = e.x - p.x;
+      let oy = e.y - p.y;
+      let od = Math.hypot(ox, oy);
+      if (od >= bodyDist) continue;
+      if (od < 0.001) { ox = 1; oy = 0; od = 1; } // přesný překryv: vytlač kamkoliv
+      e.x = p.x + (ox / od) * bodyDist;
+      e.y = p.y + (oy / od) * bodyDist;
+      e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
+      e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+    }
 
     e.moving = edx !== 0 || edy !== 0;
     if (Math.abs(edx) > Math.abs(edy)) {
@@ -401,7 +523,7 @@ setInterval(() => {
       const dist = Math.hypot(p.x - e.x, p.y - e.y);
       const hitRadius = (e.size || 10) + 6;
 
-      if (dist < hitRadius && now > p.invulnerableUntil) {
+      if (!stunned && dist < hitRadius && now > p.invulnerableUntil) {
         p.hp -= 1;
         p.invulnerableUntil = now + 1200; // 1.2s imunita proti další ráně
 
@@ -418,6 +540,7 @@ setInterval(() => {
           p.x = (MAP_W * TILE) / 2 + (Math.random() - 0.5) * 50;
           p.y = (MAP_H * TILE) / 2 + (Math.random() - 0.5) * 50;
           p.invulnerableUntil = now + 2000;
+          p.action = null;
         }
       }
     }
@@ -459,11 +582,27 @@ setInterval(() => {
   const state = JSON.stringify({
     type: "state",
     level,
-    players: [...players.values()].map(({ input, ...rest }) => ({
-      ...rest,
-      invulnerable: now < rest.invulnerableUntil,
-      attacking: now < rest.attackUntil,
-    })),
+    players: [...players.values()].map(({ input, action, cooldowns, actionSeq, ...rest }) => {
+      const busy = action && now < action.endAt;
+      return {
+        ...rest,
+        invulnerable: now < rest.invulnerableUntil,
+        attacking: now < rest.attackUntil,
+        // animace: klient podle toho vybírá snímky (čas od začátku akce posíláme, ne absolutní čas)
+        anim: busy ? action.name : rest.moving ? "walk" : "idle",
+        animId: busy ? action.id : 0,
+        animElapsed: busy ? now - action.start : 0,
+        animDir: busy ? action.dir : rest.dir,
+        // zbývající cooldowny v ms (pro HUD)
+        cd: rest.cls === "photographer"
+          ? {
+              snapshot: Math.max(0, cooldowns.snapshot - now),
+              strong_flash: Math.max(0, cooldowns.strong_flash - now),
+              perfect_shot: Math.max(0, cooldowns.perfect_shot - now),
+            }
+          : undefined,
+      };
+    }),
     enemies: enemies.filter((e) => e.hp > 0).map((e) => ({
       id: e.id,
       type: e.type,
@@ -474,9 +613,11 @@ setInterval(() => {
       x: Math.round(e.x * 10) / 10,
       y: Math.round(e.y * 10) / 10,
       dir: e.dir,
-      hp: e.hp,
+      hp: Math.round(e.hp * 100) / 100,
       maxHp: e.maxHp,
       hit: now < e.hitUntil,
+      marked: now < e.markedUntil,
+      stunned: now < e.stunUntil,
     })),
     items: [...items.values()].map((it) => ({
       id: it.id,
