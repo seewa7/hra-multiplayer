@@ -145,8 +145,8 @@ function setKey(code, pressed) {
 // Schopnosti třídy: klávesa -> slot (server rozhodne, jestli a co se stane)
 const ABILITY_KEYS = { KeyQ: "q", KeyE: "e" };
 
-// Cheaty pro testování: napsat 6767 (za sebou, mimo políčko se jménem) přepne god mode
-const CHEAT_CODES = { 6767: "god" };
+// Cheaty pro testování (číslice za sebou, mimo políčko se jménem): 6767 = god mode, 1234 = přivolat bosse
+const CHEAT_CODES = { 6767: "god", 1234: "boss" };
 let cheatBuffer = "";
 
 addEventListener("keydown", (e) => {

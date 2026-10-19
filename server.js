@@ -902,6 +902,15 @@ wss.on("connection", (ws) => {
       player.god = !player.god;
       console.log(`  ★ ${player.name}: god mode ${player.god ? "ZAPNUT" : "vypnut"}`);
     }
+    // Cheat 1234: přivolá bosse Adama hned (nebo znovu po porážce); když už bojuje, nic se nestane
+    if (msg.type === "cheat" && player && CHEATS_ENABLED && msg.id === "boss") {
+      if (!(adam.spawned && adam.state !== "defeated")) {
+        if (adam.e) adam.e.gone = true; // zbytek poraženého bosse
+        resetAdam();
+        spawnAdam(Date.now());
+        console.log(`  ★ ${player.name}: přivolal bosse`);
+      }
+    }
 
     // Hráč si vybral buff z nabídky po postupu na další level
     if (msg.type === "pickBuff" && player && player.offer && player.offer.includes(msg.id)) {
