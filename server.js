@@ -307,7 +307,7 @@ function resolveAction(p, now) {
     const reach = (e.size || 10) / 2;
 
     if (a.name === "snapshot" || a.name === "strong_flash") {
-      // kužel před postavou: dosah + úhel
+      // kužel před postavou: dosah + úhel (minDot -1 = dokola, 360°)
       if (dist > ab.range + reach) continue;
       if (dist > 6 && (vx * fx + vy * fy) / dist < ab.minDot) continue;
     } else if (a.name === "perfect_shot") {
@@ -395,24 +395,16 @@ wss.on("connection", (ws) => {
       const now = Date.now();
       if (player.cls === "photographer") {
         startAbility(player, "snapshot", now); // základní útok Fotografa
-      } else if (now - player.lastAttack > 300 * BUFFS.cooldownMult(player.buffs)) {
+      } else if (now - player.lastAttack > CLASSES.hero.attack.cooldown * BUFFS.cooldownMult(player.buffs)) {
         player.lastAttack = now;
         player.attackUntil = now + 180;
 
-        // Dosah útoku před hráčem
-        let ax = player.x;
-        let ay = player.y;
-        if (player.dir === "left") ax -= 18;
-        if (player.dir === "right") ax += 18;
-        if (player.dir === "up") ay -= 18;
-        if (player.dir === "down") ay += 18;
-
+        // Základní útok zasáhne všechny nepřátele v kruhu kolem hráče (360°), směr nehraje roli
+        const atk = CLASSES.hero.attack;
         for (const e of enemies) {
           if (e.hp <= 0) continue;
-          const dist = Math.hypot(e.x - ax, e.y - ay);
-          // sliz, který se tě dotýká, jde zasáhnout z jakékoliv strany (i když je vedle nebo za tebou)
-          const touching = Math.hypot(e.x - player.x, e.y - player.y) < (e.size || 10) + 8;
-          if (dist < 22 || touching) hurtEnemy(e, 1, player, now, true);
+          const dist = Math.hypot(e.x - player.x, e.y - player.y);
+          if (dist <= atk.range + (e.size || 10) / 2) hurtEnemy(e, atk.damage, player, now, atk.knockback);
         }
       }
     }

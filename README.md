@@ -46,8 +46,8 @@ Při vstupu do hry si hráč vybere třídu. Zatím jsou dvě:
 
 | Třída | Ovládání |
 |---|---|
-| **Hrdina** | Mezerník / klik: úder mečem |
-| **Fotograf** | Mezerník / klik: **Momentka** (kužel před sebou, označí cíl na 3 s, označený dostává o 15 % víc poškození) · **Q**: **Silný blesk** (omráčí a zpomalí, cooldown 7 s) · **E**: **Perfektní záběr** (dlouhý paprsek, zasáhne všechny v řadě a označí je, cooldown 14 s) |
+| **Hrdina** | Mezerník / klik: úder mečem, zasáhne všechny kolem dokola (360°) |
+| **Fotograf** | Mezerník / klik: **Momentka** (zasáhne dokola 360°, označí cíl na 3 s, označený dostává o 15 % víc poškození) · **Q**: **Silný blesk** (omráčí a zpomalí, cooldown 7 s) · **E**: **Perfektní záběr** (dlouhý paprsek, zasáhne všechny v řadě a označí je, cooldown 14 s) |
 
 Časování animací, cooldowny, dosahy a poškození všech tříd jsou v `public/shared/classes.js`.
 Klient jen pošle záměr (`attack` / `ability`), o zásahu, poškození a cooldownu rozhoduje server.

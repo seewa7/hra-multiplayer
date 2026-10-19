@@ -370,33 +370,21 @@ function getSlimeSprite(color, eyeColor, hit, frameIndex) {
   return c;
 }
 
-function drawAttackSlash(ctx, x, y, dir) {
+// Úder hrdiny zasahuje dokola (360°), proto se kreslí kruhový záblesk kolem postavy
+function drawAttackSlash(ctx, x, y) {
+  const r = CLASSES.hero.attack.range - 6;
+  const cy = y - 6;
   ctx.save();
-  if (dir === "left") {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(x - 14, y - 11, 3, 10);
-    ctx.fillStyle = "#ffeb3b";
-    ctx.fillRect(x - 12, y - 13, 3, 14);
-    ctx.fillRect(x - 15, y - 8, 2, 6);
-  } else if (dir === "right") {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(x + 11, y - 11, 3, 10);
-    ctx.fillStyle = "#ffeb3b";
-    ctx.fillRect(x + 9, y - 13, 3, 14);
-    ctx.fillRect(x + 13, y - 8, 2, 6);
-  } else if (dir === "up") {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(x - 5, y - 18, 10, 3);
-    ctx.fillStyle = "#ffeb3b";
-    ctx.fillRect(x - 7, y - 16, 14, 3);
-    ctx.fillRect(x - 3, y - 19, 6, 2);
-  } else {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(x - 5, y + 1, 10, 3);
-    ctx.fillStyle = "#ffeb3b";
-    ctx.fillRect(x - 7, y - 1, 14, 3);
-    ctx.fillRect(x - 3, y + 2, 6, 2);
-  }
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#ffeb3b";
+  ctx.beginPath();
+  ctx.ellipse(x, cy, r, r * 0.85, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.ellipse(x, cy, r, r * 0.85, 0, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -582,8 +570,8 @@ function frame(now) {
       }
 
       // vizuální efekt útoku
-      if (p.attacking) {
-        drawAttackSlash(ctx, x, y, p.dir);
+      if (p.attacking && p.cls !== "photographer") {
+        drawAttackSlash(ctx, x, y);
       }
     } else if (item.type === "enemy") {
       const en = item.obj;
