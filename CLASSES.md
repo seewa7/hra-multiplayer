@@ -25,7 +25,8 @@ Obecná pravidla (větve, PR, revize) jsou v `AGENTS.md`, tady jsou jen pravidla
    (viz `startAbility` a základní útok hrdiny). Jinak buff Rychlejší útoky třídě nepomůže.
 3. **Pohyb jde přes společnou smyčku v `server.js`** (ta násobí `BUFFS.speedMult`). Nepiš si vlastní
    pohyb. Když třída něco jako dash nebo zrychlení potřebuje, **vynásob** rychlost, nepřepisuj ji.
-4. **Zranění hráče musí respektovat štít a nezranitelnost.** Dnes je zranění hráče jen v smyčce nepřátel
+4. **Smrt hráče řeší jen `killPlayer`** (oživení po 30 s, konec hry, když zemřou všichni). Nikdy nenastavuj `hp = 0` ani neoživuj ručně.
+   **Zranění hráče musí respektovat štít a nezranitelnost.** Dnes je zranění hráče jen v smyčce nepřátel
    (štít → pak životy → respawn). Pokud přidáš nový zdroj zranění hráčů (past, boss, PvP), nejdřív v samostatném PR
    vytáhni zranění do jedné funkce `hurtPlayer` a používej ji. Nikdy neodečítej `p.hp` ručně jinde.
 5. **Životy a maximum nastavuje jen systém buffů.** `maxHp` ani `hp` nepřepisuj po vstupu do hry

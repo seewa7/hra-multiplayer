@@ -79,6 +79,16 @@ Všechna čísla jsou v objektu `DIFFICULTY` nahoře v `server.js`.
 - **Nový herní objekt** (mince, nepřátelé): ulož ho na serveru, posílej ve zprávě `state` a v `game.js` ho nakresli ve funkci `frame`.
 - **Velikost mapy**: `MAP_W` / `MAP_H` – musí být stejné v `server.js` i `game.js`.
 
+## Smrt, oživení a konec hry
+
+Když ztratíš všechny životy, na **30 s** vypadneš ze hry (kamera sleduje živého spoluhráče) a pak se oživíš ve středu mapy
+s krátkou nezranitelností. Buffy, XP i level ti zůstávají.
+- **Hraješ sám:** máš **jedno oživení**. Druhá smrt = konec hry.
+- **Hraješ s ostatními:** oživuješ se pořád, hra končí **až zemřou všichni hráči naráz**.
+- Po konci hry se na 10 s ukáže výsledek (čas přežití, level a body hráčů) a pak začne **nová hra** (level, XP, buffy a skóre se vynulují,
+  obtížnost začíná znovu od 1. úrovně).
+Časy jsou v objektu `DEATH` nahoře v `server.js`.
+
 ## XP, levely a buffy
 
 Z každého poraženého nepřítele vypadne **XP krystal** (zelený sliz 2 XP, ohnivý 3, obří 6), mince dávají 1 XP.

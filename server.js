@@ -84,6 +84,13 @@ const DIFFICULTY = {
   joinProtectionMs: 3000, // nový hráč je chvíli nezranitelný
 };
 
+// Smrt a konec hry
+const DEATH = {
+  respawnMs: 30000, // jak dlouho je mrtvý hráč mimo hru, než se oživí
+  soloRespawns: 1, // kolikrát se může oživit hráč, který hraje sám
+  gameOverMs: 10000, // jak dlouho se ukazuje konec hry, než začne nová
+};
+
 // Definice nepřátel (základní enemáci - slizouni s různými vlastnostmi)
 const ENEMY_DEFS = [
   { type: "slime_green", name: "Zelený sliz", color: "#2ecc71", eyeColor: "#1b5e20", speed: 45, maxHp: 2, size: 10, xp: 2 },
@@ -146,6 +153,8 @@ function spawnEnemy(defIndex) {
 
 // Na začátku jen pár zelených slizů, další přibývají s úrovní obtížnosti
 let level = 1;
+let gameOver = null; // { until, survivedMs, results } po konci hry, jinak null
+let runStart = Date.now(); // kdy začala tahle hra (pro čas přežití)
 let difficultyTime = 0; // kolik sekund hry s aspoň jedním hráčem
 for (let i = 0; i < DIFFICULTY.startEnemies; i++) {
   enemies.push(spawnEnemy(enemyDefIndexForLevel(1, i)));
@@ -327,6 +336,94 @@ function resolveAction(p, now) {
   }
 }
 
+// ---------- Smrt hráče, oživení a konec hry ----------
+function killPlayer(p, now) {
+  p.hp = 0;
+  p.action = null;
+  p.moving = false;
+  p.input = { up: false, down: false, left: false, right: false };
+
+  // Sám: jen omezený počet oživení. S ostatními se oživíš vždy (hra končí, až zemřou všichni).
+  if (players.size === 1 && p.soloRespawnsUsed >= DEATH.soloRespawns) {
+    p.respawnAt = Infinity;
+  } else {
+    if (players.size === 1) p.soloRespawnsUsed++;
+    p.respawnAt = now + DEATH.respawnMs;
+  }
+  console.log(`  ☠ ${p.name} zemřel`);
+  checkGameOver(now);
+}
+
+function respawnPlayer(p, now) {
+  p.hp = p.maxHp;
+  p.x = (MAP_W * TILE) / 2 + (Math.random() - 0.5) * 50;
+  p.y = (MAP_H * TILE) / 2 + (Math.random() - 0.5) * 50;
+  p.invulnerableUntil = now + DIFFICULTY.joinProtectionMs;
+  p.respawnAt = 0;
+  console.log(`  ✚ ${p.name} se oživil`);
+}
+
+// Hra končí, když jsou všichni hráči mrtví zároveň (sólo hráč jen když mu nezbývá oživení)
+function checkGameOver(now) {
+  if (gameOver || players.size === 0) return;
+  const all = [...players.values()];
+  if (!all.every((p) => p.hp <= 0)) return;
+  if (all.length === 1 && Number.isFinite(all[0].respawnAt)) return; // sólo hráč se ještě oživí
+
+  gameOver = {
+    until: now + DEATH.gameOverMs,
+    survivedMs: now - runStart,
+    results: all
+      .map((p) => ({ name: p.name, cls: p.cls, score: p.score || 0, level: p.level }))
+      .sort((a, b) => b.score - a.score),
+  };
+  console.log(`  GAME OVER (přežili jste ${Math.round(gameOver.survivedMs / 1000)} s)`);
+}
+
+// Nová hra: všechno se vrátí na začátek (hráči zůstávají ve hře se jménem a třídou)
+function resetRun(now) {
+  level = 1;
+  difficultyTime = 0;
+  itemSpawnTimer = 0;
+  runStart = now;
+  gameOver = null;
+
+  for (const p of players.values()) {
+    Object.assign(p, {
+      x: (MAP_W * TILE) / 2 + (Math.random() - 0.5) * 100,
+      y: (MAP_H * TILE) / 2 + (Math.random() - 0.5) * 100,
+      dir: "down",
+      moving: false,
+      hp: 3,
+      maxHp: 3,
+      score: 0,
+      level: 1,
+      xp: 0,
+      buffs: {},
+      shield: 0,
+      shieldAt: 0,
+      regenAt: 0,
+      pendingPicks: 0,
+      offer: null,
+      invulnerableUntil: now + DIFFICULTY.joinProtectionMs,
+      attackUntil: 0,
+      lastAttack: 0,
+      action: null,
+      cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
+      respawnAt: 0,
+      soloRespawnsUsed: 0,
+    });
+  }
+
+  enemies.length = 0;
+  for (let i = 0; i < DIFFICULTY.startEnemies; i++) {
+    enemies.push(spawnEnemy(enemyDefIndexForLevel(1, i)));
+  }
+  items.clear();
+  for (let i = 0; i < 6; i++) spawnRandomItem();
+  console.log("  Nová hra!");
+}
+
 function send(ws, msg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -371,10 +468,13 @@ wss.on("connection", (ws) => {
         regenAt: 0, // kdy přibude další život z Regenerace
         pendingPicks: 0, // kolik výběrů buffu na hráče čeká
         offer: null, // aktuální nabídka 3 buffů (nebo null)
+        respawnAt: 0, // kdy se mrtvý hráč oživí (Infinity = nikdy, hra končí)
+        soloRespawnsUsed: 0, // kolik oživení už využil, když hrál sám
         action: null, // běžící schopnost třídy (Fotograf)
         actionSeq: 0,
         cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
       };
+      if (players.size === 0) runStart = Date.now(); // hra se počítá od vstupu prvního hráče
       players.set(id, player);
       send(ws, { type: "welcome", id });
       console.log(`+ ${name} se připojil (${players.size} hráčů)`);
@@ -428,6 +528,7 @@ wss.on("connection", (ws) => {
     if (player) {
       players.delete(id);
       console.log(`- ${player.name} se odpojil (${players.size} hráčů)`);
+      checkGameOver(Date.now()); // odešel poslední živý hráč?
     }
   });
 });
@@ -436,9 +537,85 @@ wss.on("connection", (ws) => {
 // Server je "šéf" – jen on rozhoduje, kde kdo je a co dělají nepřátelé.
 let itemSpawnTimer = 0;
 
+// Sestaví stav hry a pošle ho všem hráčům
+function broadcastState(now) {
+  const state = JSON.stringify({
+    type: "state",
+    level,
+    solo: players.size === 1, // hraješ sám -> omezený počet oživení
+    soloRespawns: DEATH.soloRespawns,
+    gameOver: gameOver && {
+      remainingMs: Math.max(0, gameOver.until - now),
+      survivedMs: gameOver.survivedMs,
+      results: gameOver.results,
+    },
+    players: [...players.values()].map(({ input, action, cooldowns, actionSeq, shieldAt, regenAt, respawnAt, ...rest }) => {
+      const busy = action && now < action.endAt;
+      return {
+        ...rest,
+        xpNext: BUFFS.xpForNext(rest.level),
+        dead: rest.hp <= 0,
+        // za jak dlouho se mrtvý hráč oživí (null = nikdy, hra pro něj končí)
+        respawnIn: rest.hp <= 0 && Number.isFinite(respawnAt) ? Math.max(0, respawnAt - now) : null,
+        invulnerable: now < rest.invulnerableUntil,
+        attacking: now < rest.attackUntil,
+        // animace: klient podle toho vybírá snímky (čas od začátku akce posíláme, ne absolutní čas)
+        anim: busy ? action.name : rest.moving ? "walk" : "idle",
+        animId: busy ? action.id : 0,
+        animElapsed: busy ? now - action.start : 0,
+        animDir: busy ? action.dir : rest.dir,
+        // zbývající cooldowny v ms (pro HUD)
+        cd: rest.cls === "photographer"
+          ? {
+              snapshot: Math.max(0, cooldowns.snapshot - now),
+              strong_flash: Math.max(0, cooldowns.strong_flash - now),
+              perfect_shot: Math.max(0, cooldowns.perfect_shot - now),
+            }
+          : undefined,
+      };
+    }),
+    enemies: enemies.filter((e) => e.hp > 0).map((e) => ({
+      id: e.id,
+      type: e.type,
+      name: e.name,
+      color: e.color,
+      eyeColor: e.eyeColor,
+      size: e.size,
+      x: Math.round(e.x * 10) / 10,
+      y: Math.round(e.y * 10) / 10,
+      dir: e.dir,
+      hp: Math.round(e.hp * 100) / 100,
+      maxHp: e.maxHp,
+      hit: now < e.hitUntil,
+      marked: now < e.markedUntil,
+      stunned: now < e.stunUntil,
+    })),
+    items: [...items.values()].map((it) => ({
+      id: it.id,
+      type: it.type,
+      x: it.x,
+      y: it.y,
+      value: it.value,
+      fading: it.expiresAt - now < ITEM_FADING_MS, // klient pak předmět nechá blikat
+    })),
+  });
+  for (const client of wss.clients) {
+    if (client.readyState === client.OPEN) client.send(state);
+  }
+}
+
 setInterval(() => {
   const dt = 1 / TICK_RATE;
   const now = Date.now();
+
+  // Konec hry: všechno stojí, ukazuje se výsledek; pak začne nová hra
+  if (gameOver) {
+    if (now < gameOver.until) {
+      broadcastState(now);
+      return;
+    }
+    resetRun(now);
+  }
 
   // 3-0) Obtížnost: stoupá, dokud někdo hraje; když hru všichni opustí, začne se znovu
   if (players.size > 0) {
@@ -459,6 +636,15 @@ setInterval(() => {
 
   // 3a) Pohyb hráčů
   for (const p of players.values()) {
+    // mrtvý hráč čeká na oživení a nic nedělá
+    if (p.hp <= 0) {
+      if (now >= p.respawnAt) respawnPlayer(p, now);
+      else {
+        p.moving = false;
+        continue;
+      }
+    }
+
     // schopnost Fotografa: zásah ve správném snímku animace a po dobu animace stojí
     if (p.action && !p.action.resolved && now >= p.action.hitAt) {
       p.action.resolved = true;
@@ -604,14 +790,7 @@ setInterval(() => {
         p.x = Math.max(8, Math.min(MAP_W * TILE - 8, p.x));
         p.y = Math.max(8, Math.min(MAP_H * TILE - 2, p.y));
 
-        if (p.hp <= 0) {
-          // Hráč byl zasažen a ztratil všechny životy -> respawn
-          p.hp = p.maxHp;
-          p.x = (MAP_W * TILE) / 2 + (Math.random() - 0.5) * 50;
-          p.y = (MAP_H * TILE) / 2 + (Math.random() - 0.5) * 50;
-          p.invulnerableUntil = now + 2000;
-          p.action = null;
-        }
+        if (p.hp <= 0) killPlayer(p, now); // ztratil všechny životy
       }
     }
   }
@@ -665,59 +844,7 @@ setInterval(() => {
   }
 
   // 3d) Pošli všem aktuální stav
-  const state = JSON.stringify({
-    type: "state",
-    level,
-    players: [...players.values()].map(({ input, action, cooldowns, actionSeq, shieldAt, regenAt, ...rest }) => {
-      const busy = action && now < action.endAt;
-      return {
-        ...rest,
-        xpNext: BUFFS.xpForNext(rest.level),
-        invulnerable: now < rest.invulnerableUntil,
-        attacking: now < rest.attackUntil,
-        // animace: klient podle toho vybírá snímky (čas od začátku akce posíláme, ne absolutní čas)
-        anim: busy ? action.name : rest.moving ? "walk" : "idle",
-        animId: busy ? action.id : 0,
-        animElapsed: busy ? now - action.start : 0,
-        animDir: busy ? action.dir : rest.dir,
-        // zbývající cooldowny v ms (pro HUD)
-        cd: rest.cls === "photographer"
-          ? {
-              snapshot: Math.max(0, cooldowns.snapshot - now),
-              strong_flash: Math.max(0, cooldowns.strong_flash - now),
-              perfect_shot: Math.max(0, cooldowns.perfect_shot - now),
-            }
-          : undefined,
-      };
-    }),
-    enemies: enemies.filter((e) => e.hp > 0).map((e) => ({
-      id: e.id,
-      type: e.type,
-      name: e.name,
-      color: e.color,
-      eyeColor: e.eyeColor,
-      size: e.size,
-      x: Math.round(e.x * 10) / 10,
-      y: Math.round(e.y * 10) / 10,
-      dir: e.dir,
-      hp: Math.round(e.hp * 100) / 100,
-      maxHp: e.maxHp,
-      hit: now < e.hitUntil,
-      marked: now < e.markedUntil,
-      stunned: now < e.stunUntil,
-    })),
-    items: [...items.values()].map((it) => ({
-      id: it.id,
-      type: it.type,
-      x: it.x,
-      y: it.y,
-      value: it.value,
-      fading: it.expiresAt - now < ITEM_FADING_MS, // klient pak předmět nechá blikat
-    })),
-  });
-  for (const client of wss.clients) {
-    if (client.readyState === client.OPEN) client.send(state);
-  }
+  broadcastState(now);
 }, 1000 / TICK_RATE);
 
 // ---------- Start ----------
