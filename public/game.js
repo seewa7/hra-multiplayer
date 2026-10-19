@@ -293,6 +293,19 @@ function photographerFrame(p, now) {
   return photoFrame(p.anim, frame, dir);
 }
 
+// Momentka zasahuje dokola (360°), ale záblesk ve spritu je jen ve směru pohledu –
+// proto se ve chvíli zásahu kolem Fotografa na okamžik ukáže kruh dosahu.
+function drawSnapshotRing(ctx, p, x, y, now) {
+  if (p.anim !== "snapshot") return;
+  const ab = CLASSES.photographer.abilities.snapshot;
+  const total = ab.frames.reduce((a, b) => a + b, 0);
+  const hitAt = ab.frames.slice(0, ab.hitFrame).reduce((a, b) => a + b, 0);
+  const t = now - p.animT0;
+  if (t < hitAt || t > total) return;
+  const fade = 1 - (t - hitAt) / (total - hitAt); // po zásahu pomalu zmizí
+  drawAttackSlash(ctx, x, y - 4, ab.range - 4, Math.max(0, fade));
+}
+
 function drawPhotographer(ctx, p, x, y, now) {
   const f = photographerFrame(p, now);
   ctx.drawImage(
@@ -371,10 +384,11 @@ function getSlimeSprite(color, eyeColor, hit, frameIndex) {
 }
 
 // Úder hrdiny zasahuje dokola (360°), proto se kreslí kruhový záblesk kolem postavy
-function drawAttackSlash(ctx, x, y) {
-  const r = CLASSES.hero.attack.range - 6;
+function drawAttackSlash(ctx, x, y, radius = CLASSES.hero.attack.range - 6, alpha = 1) {
+  const r = radius;
   const cy = y - 6;
   ctx.save();
+  ctx.globalAlpha = alpha;
   ctx.lineWidth = 3;
   ctx.strokeStyle = "#ffeb3b";
   ctx.beginPath();
@@ -585,6 +599,7 @@ function frame(now) {
       }
       if (p.cls === "photographer" && photo.ready) {
         drawPhotographer(ctx, p, x, y, now);
+        drawSnapshotRing(ctx, p, x, y, now);
       } else {
         ctx.drawImage(getSprite(p.color, p.dir, p.moving ? walk : 0), x - 5, y - 14);
       }
