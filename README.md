@@ -58,11 +58,17 @@ Klient jen pošle záměr (`attack` / `ability`), o zásahu, poškození a coold
 Znovu se vyrobí příkazem `python3 tools/build_photographer_atlas.py` (potřebuje `pip3 install pillow numpy scipy`).
 Velikost postavy ve hře se mění konstantou `PHOTO_SCALE` v `public/game.js`.
 
-## Obtížnost
+## Obtížnost (vlny jako ve Survivor.io)
 
-Hra začíná klidně (2 zelení slizi, nepřátelé se neobjevují blízko hráčů, nový hráč je 3 s nezranitelný)
-a každých 45 s stoupne úroveň (max. 10): přibývají nepřátelé (až 8), jsou rychlejší a vidí hráče z větší dálky,
-od 3. úrovně přibývají Ohniví slizi a od 5. Obří slizi. Když hru všichni opustí, začne se znovu od 1. úrovně.
+Nepřátelé **jdou pořád za nejbližším živým hráčem, ať je kdekoliv na mapě**. Nový se objevuje v kruhu těsně mimo obrazovku
+kolem hráče (a když zabiješ jednoho, za chvíli se objeví další, už silnější). Hra začíná klidně (2 zelení slizi, 3 s nezranitelnosti pro
+nového hráče) a **každých 30 s stoupne úroveň, bez stropu**:
+- přibývá nepřátel (+1,2 za úroveň, max. 50),
+- mají víc životů (+12 % za úroveň) a dávají víc XP,
+- jsou rychlejší (+3 % za úroveň, nejvýš 150 %),
+- od 3. úrovně přibývají Ohniví slizi, od 5. Obří slizi,
+- od 8. úrovně a pak každých 8 úrovní přijde **boss Král slizů** (velký, hodně životů a XP, neoživuje se).
+Nepřátelé se navzájem lehce odtlačují, takže hejno nevypadá jako jeden sliz. Když hru všichni opustí (nebo skončí smrtí), začne se znovu od 1. úrovně.
 Všechna čísla jsou v objektu `DIFFICULTY` nahoře v `server.js`.
 
 ## Soubory

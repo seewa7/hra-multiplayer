@@ -70,17 +70,21 @@ const players = new Map(); // id -> hráč
 
 // Obtížnost: hra začíná klidně a postupně se zhoršuje, dokud je ve hře aspoň jeden hráč
 const DIFFICULTY = {
-  levelSeconds: 45, // jak často (s) stoupne úroveň
-  maxLevel: 10,
+  levelSeconds: 30, // jak často (s) stoupne úroveň; nepřátelé jsou pořád silnější a je jich víc
   startEnemies: 2, // počet nepřátel na začátku
-  maxEnemies: 8, // počet nepřátel na nejvyšší úrovni
-  enemiesPerLevel: 0.7, // o kolik nepřátel víc s každou úrovní
-  speedPerLevel: 0.04, // nepřátelé jsou s každou úrovní o 4 % rychlejší
-  chaseStart: 90, // dosah, ze kterého nepřítel hráče vidí, na 1. úrovni
-  chaseEnd: 160, // totéž na nejvyšší úrovni
+  maxEnemies: 50, // strop počtu běžných nepřátel
+  enemiesPerLevel: 1.2, // o kolik nepřátel víc s každou úrovní
+  speedPerLevel: 0.03, // nepřátelé jsou s každou úrovní o 3 % rychlejší...
+  maxSpeedMult: 1.5, // ...nejvýš na 150 % (ať nejsou rychlejší než hráč s buffy)
+  hpPerLevel: 0.12, // životy nepřátel rostou o 12 % za úroveň (bez stropu)
+  xpPerLevel: 0.08, // XP z nepřátel roste o 8 % za úroveň
   redFromLevel: 3, // od které úrovně přibývají Ohniví slizi (rychlejší)
   purpleFromLevel: 5, // od které úrovně přibývají Obří slizi (odolnější)
+  bossFirstLevel: 8, // od které úrovně se objeví boss...
+  bossEvery: 8, // ...a pak znovu po tolika úrovních
   spawnSafeDistance: 120, // nepřítel se neobjeví blíž než tohle k hráči
+  spawnRingMin: 210, // nepřátelé se objevují v kruhu kolem hráče (mimo obrazovku)
+  spawnRingMax: 260,
   joinProtectionMs: 3000, // nový hráč je chvíli nezranitelný
 };
 
@@ -101,13 +105,23 @@ const ENEMY_DEFS = [
 let nextEnemyId = 1;
 const enemies = [];
 
-// Náhodné místo na mapě dost daleko od hráčů (a od středu, kde se noví hráči objevují)
+// Kde se objeví nový nepřítel: v kruhu kolem náhodného živého hráče, těsně mimo obrazovku
+// (jako ve Vampire Survivors), dost daleko od všech hráčů. Bez hráčů kdekoliv mimo střed mapy.
 function safeSpawnPosition() {
+  const alive = [...players.values()].filter((p) => p.hp > 0);
   const avoid = [{ x: (MAP_W * TILE) / 2, y: (MAP_H * TILE) / 2 }, ...players.values()];
   let x, y;
-  for (let i = 0; i < 30; i++) {
-    x = Math.random() * (MAP_W * TILE - 60) + 30;
-    y = Math.random() * (MAP_H * TILE - 60) + 30;
+  for (let i = 0; i < 40; i++) {
+    if (alive.length) {
+      const p = alive[Math.floor(Math.random() * alive.length)];
+      const angle = Math.random() * Math.PI * 2;
+      const d = DIFFICULTY.spawnRingMin + Math.random() * (DIFFICULTY.spawnRingMax - DIFFICULTY.spawnRingMin);
+      x = Math.max(30, Math.min(MAP_W * TILE - 30, p.x + Math.cos(angle) * d));
+      y = Math.max(30, Math.min(MAP_H * TILE - 30, p.y + Math.sin(angle) * d));
+    } else {
+      x = Math.random() * (MAP_W * TILE - 60) + 30;
+      y = Math.random() * (MAP_H * TILE - 60) + 30;
+    }
     if (avoid.every((a) => Math.hypot(a.x - x, a.y - y) >= DIFFICULTY.spawnSafeDistance)) break;
   }
   return { x, y };
@@ -125,19 +139,38 @@ function enemyCountForLevel(level) {
   return Math.min(DIFFICULTY.maxEnemies, DIFFICULTY.startEnemies + Math.floor((level - 1) * DIFFICULTY.enemiesPerLevel));
 }
 
-function spawnEnemy(defIndex) {
-  const def = ENEMY_DEFS[defIndex % ENEMY_DEFS.length];
+// Rychlost nepřátel roste s úrovní, ale má strop
+function speedMultForLevel(level) {
+  return Math.min(DIFFICULTY.maxSpeedMult, 1 + DIFFICULTY.speedPerLevel * (level - 1));
+}
+
+// Boss: velký, pomalý, hodně životů a XP; po smrti se neoživuje
+const BOSS_DEF = {
+  type: "slime_boss", name: "Král slizů", color: "#f1c40f", eyeColor: "#7a4b00",
+  speed: 38, maxHp: 22, size: 22, xp: 30, boss: true,
+};
+
+// Vlastnosti nepřítele podle úrovně (životy a XP rostou, aby byly nepřátelé postupně silnější)
+function enemyStatsFor(def, lvl) {
+  const hp = Math.round(def.maxHp * (1 + DIFFICULTY.hpPerLevel * (lvl - 1)) * 10) / 10;
   return {
-    id: nextEnemyId++,
     type: def.type,
     name: def.name,
     color: def.color,
     eyeColor: def.eyeColor,
     speed: def.speed,
-    hp: def.maxHp,
-    maxHp: def.maxHp,
+    hp,
+    maxHp: hp,
     size: def.size,
-    xp: def.xp, // kolik XP upustí po smrti
+    xp: Math.round(def.xp * (1 + DIFFICULTY.xpPerLevel * (lvl - 1))), // kolik XP upustí po smrti
+    boss: !!def.boss,
+  };
+}
+
+function createEnemy(def) {
+  return {
+    id: nextEnemyId++,
+    ...enemyStatsFor(def, level),
     ...safeSpawnPosition(),
     dir: "down",
     moving: true,
@@ -149,6 +182,10 @@ function spawnEnemy(defIndex) {
     stunUntil: 0, // omráčený (oslepený) nepřítel se nehýbe a nekouše
     slowUntil: 0, // zpomalený nepřítel
   };
+}
+
+function spawnEnemy(defIndex) {
+  return createEnemy(ENEMY_DEFS[defIndex % ENEMY_DEFS.length]);
 }
 
 // Na začátku jen pár zelených slizů, další přibývají s úrovní obtížnosti
@@ -266,6 +303,10 @@ function hurtEnemy(e, dmg, player, now, knockback) {
 
     // XP krystal vypadne z každého poraženého nepřítele
     spawnItem("xp", e.x, e.y, e.xp);
+    if (e.boss) {
+      spawnItem("heart", e.x + 10, e.y); // boss navíc upustí srdce
+      console.log(`  ${player.name} porazil bosse (${e.name})`);
+    }
 
     // Šance na vypadnutí lootu z poraženého nepřítele
     if (Math.random() < ENEMY_DROP_CHANCE) {
@@ -590,6 +631,7 @@ function broadcastState(now) {
       hit: now < e.hitUntil,
       marked: now < e.markedUntil,
       stunned: now < e.stunUntil,
+      boss: e.boss,
     })),
     items: [...items.values()].map((it) => ({
       id: it.id,
@@ -621,18 +663,24 @@ setInterval(() => {
   // 3-0) Obtížnost: stoupá, dokud někdo hraje; když hru všichni opustí, začne se znovu
   if (players.size > 0) {
     difficultyTime += dt;
-    const newLevel = Math.min(DIFFICULTY.maxLevel, 1 + Math.floor(difficultyTime / DIFFICULTY.levelSeconds));
+    const newLevel = 1 + Math.floor(difficultyTime / DIFFICULTY.levelSeconds); // bez stropu, hra se zhoršuje pořád
     if (newLevel > level) {
       level = newLevel;
       console.log(`  Úroveň obtížnosti: ${level}`);
-      for (let n = enemies.length; n < enemyCountForLevel(level); n++) {
+      // nových nepřátel přibude, aby jich bylo tolik, kolik odpovídá úrovni (boss se nepočítá)
+      for (let n = enemies.filter((e) => !e.boss).length; n < enemyCountForLevel(level); n++) {
         enemies.push(spawnEnemy(enemyDefIndexForLevel(level, n)));
+      }
+      if (level >= DIFFICULTY.bossFirstLevel && (level - DIFFICULTY.bossFirstLevel) % DIFFICULTY.bossEvery === 0) {
+        enemies.push(createEnemy(BOSS_DEF));
+        console.log(`  ⚠ Objevil se boss (${BOSS_DEF.name})`);
       }
     }
   } else if (level > 1 || difficultyTime > 0) {
     level = 1;
     difficultyTime = 0;
-    enemies.length = DIFFICULTY.startEnemies;
+    enemies.length = 0;
+    for (let i = 0; i < DIFFICULTY.startEnemies; i++) enemies.push(spawnEnemy(enemyDefIndexForLevel(1, i)));
   }
 
   // 3a) Pohyb hráčů
@@ -686,12 +734,19 @@ setInterval(() => {
   // 3b) AI nepřátel a kolize
   for (const e of enemies) {
     if (e.hp <= 0) {
+      if (e.boss) {
+        e.gone = true; // boss se po smrti neoživuje, odstraní se níž
+        continue;
+      }
       e.respawnTimer -= dt;
       if (e.respawnTimer <= 0) {
-        // Respawn na náhodném místě
-        e.hp = e.maxHp;
-        e.markedUntil = e.stunUntil = e.slowUntil = 0;
-        Object.assign(e, safeSpawnPosition());
+        // Znovu se objeví u okraje obrazovky, silnější podle aktuální úrovně (typ se losuje znovu)
+        Object.assign(
+          e,
+          enemyStatsFor(ENEMY_DEFS[enemyDefIndexForLevel(level, e.id)], level),
+          safeSpawnPosition(),
+          { markedUntil: 0, stunUntil: 0, slowUntil: 0, hitUntil: 0 }
+        );
       }
       continue;
     }
@@ -709,18 +764,16 @@ setInterval(() => {
     }
 
     let edx = 0, edy = 0;
-    const t = (level - 1) / (DIFFICULTY.maxLevel - 1); // 0 na 1. úrovni, 1 na nejvyšší
-    const CHASE_RADIUS = DIFFICULTY.chaseStart + (DIFFICULTY.chaseEnd - DIFFICULTY.chaseStart) * t;
     const stunned = now < e.stunUntil;
     const speed =
       e.speed *
-      (1 + DIFFICULTY.speedPerLevel * (level - 1)) * // rychlejší s úrovní obtížnosti
+      speedMultForLevel(level) * // rychlejší s úrovní obtížnosti
       (now < e.slowUntil ? CLASSES.photographer.abilities.strong_flash.slowFactor : 1); // zpomalení od Fotografa
 
     if (stunned) {
       // omráčený (oslepený) nepřítel stojí
-    } else if (nearest && minDist < CHASE_RADIUS) {
-      // Pronásledování hráče
+    } else if (nearest) {
+      // Pronásledování nejbližšího živého hráče, ať je kdekoliv na mapě
       const angle = Math.atan2(nearest.y - e.y, nearest.x - e.x);
       edx = Math.cos(angle);
       edy = Math.sin(angle);
@@ -795,6 +848,27 @@ setInterval(() => {
       }
     }
   }
+
+  // Nepřátelé se nesmí slít do jednoho bodu (jinak by hejno vypadalo jako jeden sliz): lehce se odtlačují
+  const aliveEnemies = enemies.filter((e) => e.hp > 0);
+  for (let i = 0; i < aliveEnemies.length; i++) {
+    for (let j = i + 1; j < aliveEnemies.length; j++) {
+      const a = aliveEnemies[i], b = aliveEnemies[j];
+      const minD = ((a.size || 10) + (b.size || 10)) * 0.45;
+      let ox = b.x - a.x, oy = b.y - a.y;
+      let d = Math.hypot(ox, oy);
+      if (d >= minD) continue;
+      if (d < 0.01) { ox = Math.random() - 0.5; oy = Math.random() - 0.5; d = Math.hypot(ox, oy) || 1; }
+      const push = (minD - d) / 2;
+      a.x -= (ox / d) * push; a.y -= (oy / d) * push;
+      b.x += (ox / d) * push; b.y += (oy / d) * push;
+    }
+  }
+  for (const e of aliveEnemies) {
+    e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
+    e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+  }
+  for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].gone) enemies.splice(i, 1); // poražený boss
 
   // 3b2) Buffy: dobíjení štítů a regenerace životů
   for (const p of players.values()) {
