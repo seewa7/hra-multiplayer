@@ -136,7 +136,12 @@ klient posílá `{type: "pickBuff", id}`.
 
 ## Cheaty (pro testování)
 
-Ve hře napiš za sebou **6767** (číslice nahoře nebo na numerické klávesnici, ne do políčka se jménem) a zapne se **god mode**:
-nic ti neublíží (ani boss Adam) a vedle jména máš ★ a v HUD hlášku. Stejným kódem se vypne. Platí jen pro hráče, který kód napsal.
+Ve hře napiš za sebou číslice (nahoře nebo na numerické klávesnici, ne do políčka se jménem):
+
+| Kód | Co dělá |
+|---|---|
+| **6767** | **god mode** – nic ti neublíží (ani boss Adam), vedle jména je ★ a v HUD hláška; stejným kódem se vypne; platí jen pro tebe |
+| **1234** | **přivolá bosse Adama** hned (a znovu i po jeho porážce); když už bojuje, nic se nestane |
+
 O cheatu rozhoduje server (`CHEATS_ENABLED` v `server.js`). Když ho nechceš, spusť server s `CHEATS=0 npm start`.
 Další cheat přidáš do `CHEAT_CODES` v `public/game.js` a do obsluhy zprávy `cheat` v `server.js`.
