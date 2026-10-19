@@ -358,6 +358,8 @@ function spawnAdam(now) {
     wanderDir: { x: 0, y: 0 }, wanderTimer: 0,
     hitUntil: 0, respawnTimer: 0, markedUntil: 0, stunUntil: 0, slowUntil: 0,
   };
+  // Souboj s bossem: všichni ostatní nepřátelé zmizí a nové se objeví, až když je boss poražen
+  enemies.length = 0;
   enemies.push(adam.e);
   Object.assign(adam, { spawned: true, state: "idle", phase: 1, attack: null, history: [], fx: [] });
   adam.nextAttackAt = now + 2500; // první útok až po chvíli, ať se hráči rozkoukají
@@ -370,6 +372,10 @@ function onAdamDefeated(now) {
   adam.defeatedAt = now;
   adam.attack = null;
   adam.fx = []; // všechny efekty a zóny zmizí
+  // běžní nepřátelé se po souboji vrátí
+  for (let n = enemies.filter((e) => !e.boss && !e.adam).length; n < enemyCountForLevel(level); n++) {
+    enemies.push(spawnEnemy(enemyDefIndexForLevel(level, n)));
+  }
   console.log(`  ✔ Boss ${ADAM.name} poražen!`);
 }
 
@@ -988,6 +994,8 @@ function broadcastState(now) {
             : null,
         }
       : null,
+    // za kolik sekund se boss objeví (null = už je tady nebo byl poražen)
+    adamIn: !adam.spawned && !adam.defeated ? Math.max(0, Math.ceil(ADAM.spawnAfterSec - difficultyTime)) : null,
     bossFx: adam.fx.map((f) => ({
       id: f.id,
       kind: f.kind,
@@ -1050,13 +1058,17 @@ setInterval(() => {
     if (newLevel > level) {
       level = newLevel;
       console.log(`  Úroveň obtížnosti: ${level}`);
-      // nových nepřátel přibude, aby jich bylo tolik, kolik odpovídá úrovni (boss se nepočítá)
-      for (let n = enemies.filter((e) => !e.boss && !e.adam).length; n < enemyCountForLevel(level); n++) {
-        enemies.push(spawnEnemy(enemyDefIndexForLevel(level, n)));
-      }
-      if (level >= DIFFICULTY.bossFirstLevel && (level - DIFFICULTY.bossFirstLevel) % DIFFICULTY.bossEvery === 0) {
-        enemies.push(createEnemy(BOSS_DEF));
-        console.log(`  ⚠ Objevil se boss (${BOSS_DEF.name})`);
+      // nových nepřátel přibude, aby jich bylo tolik, kolik odpovídá úrovni (boss se nepočítá);
+      // při souboji s Adamem se žádní nepřátelé ani slizí boss neobjevují
+      const bossFight = adam.spawned && adam.state !== "defeated";
+      if (!bossFight) {
+        for (let n = enemies.filter((e) => !e.boss && !e.adam).length; n < enemyCountForLevel(level); n++) {
+          enemies.push(spawnEnemy(enemyDefIndexForLevel(level, n)));
+        }
+        if (level >= DIFFICULTY.bossFirstLevel && (level - DIFFICULTY.bossFirstLevel) % DIFFICULTY.bossEvery === 0) {
+          enemies.push(createEnemy(BOSS_DEF));
+          console.log(`  ⚠ Objevil se boss (${BOSS_DEF.name})`);
+        }
       }
     }
   } else if (level > 1 || difficultyTime > 0) {

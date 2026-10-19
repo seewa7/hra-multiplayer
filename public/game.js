@@ -19,6 +19,7 @@ let soloMode = false; // hraju sám (omezený počet oživení)
 let soloRespawns = 1; // kolik oživení má hráč, který hraje sám
 let gameOver = null; // po konci hry { remainingMs, survivedMs, results }
 let adamState = null; // boss Adam ze serveru (nebo null)
+let adamIn = null; // za kolik sekund se boss objeví (null = už je tu / byl poražen)
 let adamAttackId = 0;
 let adamAttackT0 = 0;
 const bossFx = new Map(); // id -> efekt bosse (projektily, varování, zóny)
@@ -51,6 +52,7 @@ ws.onmessage = (e) => {
 
     // Boss Adam a jeho efekty (server posílá jen to, co se má nakreslit)
     adamState = msg.adam || null;
+    adamIn = msg.adamIn ?? null;
     if (adamState && adamState.attack && adamState.attack.id !== adamAttackId) {
       adamAttackId = adamState.attack.id;
       adamAttackT0 = performance.now() - adamState.attack.elapsed; // lokální čas začátku útoku
@@ -539,22 +541,25 @@ function updateBuffPicker(me) {
 }
 
 // ---------- Boss Adam: sprity, efekty a UI ----------
-// Sheety mají pravidelnou mřížku (boss 724 × 724, VFX 543 × 724), snímky se ořezávají přímo při kreslení.
-// Kotvy (chodidla bosse / střed efektu) jsou v ADAM.anchors, takže boss při změně pózy neposkočí.
+// Atlasy a kotvy vyrábí tools/build_adam_atlas.py (snímky v originálních sheetech přetékají přes hranice
+// buněk, proto se neořezávají po mřížce). Kotva bosse = střed mezi chodidly (boss neposkakuje), kotva VFX = střed efektu.
 const adamImgs = {};
+let adamAtlas = null;
 let adamLoaded = 0;
-const ADAM_FILES = {
-  neural: "boss-neural.png", barbell: "boss-barbell.png", overclock: "boss-overclock.png",
-  vfxNeural: "vfx-neural.png", vfxShock: "vfx-shockwave.png", vfxOverclock: "vfx-overclock.png",
-};
-for (const [key, file] of Object.entries(ADAM_FILES)) {
-  const img = new Image();
-  img.onload = () => adamLoaded++;
-  img.onerror = () => console.warn("Sprite bosse se nenačetl:", file);
-  img.src = "assets/adam/" + file;
-  adamImgs[key] = img;
-}
-function adam_ready() { return adamLoaded === Object.keys(ADAM_FILES).length; }
+fetch("assets/adam/atlas.json")
+  .then((r) => r.json())
+  .then((atlas) => {
+    adamAtlas = atlas.sheets;
+    for (const [key, sh] of Object.entries(adamAtlas)) {
+      const img = new Image();
+      img.onload = () => adamLoaded++;
+      img.onerror = () => console.warn("Sprite bosse se nenačetl:", sh.file);
+      img.src = "assets/adam/" + sh.file;
+      adamImgs[key] = img;
+    }
+  })
+  .catch((err) => console.warn("Atlas bosse se nenačetl:", err));
+function adam_ready() { return adamAtlas && adamLoaded === Object.keys(adamAtlas).length; }
 
 const ATTACK_LABELS = { neural: "Neural Network", barbell: "Barbell Shockwave", overclock: "Overclock Cables" };
 
@@ -580,14 +585,23 @@ function adamPose(b, now) {
 
 function drawAdam(ctx, b, now) {
   const pose = adamPose(b, now);
-  const [ax, ay] = ADAM.anchors[pose.sheet][pose.frame];
-  const S = ADAM.scale.boss, C = ADAM.bossCell;
+  const sh = adamAtlas[pose.sheet];
+  const [ax, ay] = sh.anchors[pose.frame];
+  const S = ADAM.scale.boss;
   const x = Math.round(b.x), y = Math.round(b.y);
 
-  // stín
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  // lehké pohupování (boss se nehýbe z místa, jen "dýchá"); poražený stojí klidně
+  const bob = b.defeated ? 0 : Math.sin((now / ADAM.bob.periodMs) * Math.PI * 2) * ADAM.bob.amplitude;
+  const lift = Math.max(0, bob); // stín se při nadzvednutí trochu zmenší a zesvětlí
+
+  // stín (dvě vrstvy: měkký okraj a tmavší střed)
+  ctx.fillStyle = `rgba(0,0,0,${0.22 - lift * 0.04})`;
   ctx.beginPath();
-  ctx.ellipse(x, y, 20, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y, 30 - lift, 9 - lift * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = `rgba(0,0,0,${0.3 - lift * 0.05})`;
+  ctx.beginPath();
+  ctx.ellipse(x, y, 22 - lift, 6 - lift * 0.2, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // poražený boss se pomalu ztrácí; při přechodu do další fáze bliká
@@ -595,7 +609,10 @@ function drawAdam(ctx, b, now) {
   if (b.defeated) ctx.globalAlpha = Math.max(0.25, 1 - b.defeatedAgo / (ADAM.defeatedLingerMs * 1.2));
   const flash = b.hit || (b.blink && Math.floor(now / 90) % 2 === 0);
   if (flash) ctx.filter = "brightness(1.9)";
-  ctx.drawImage(adamImgs[pose.sheet], pose.frame * C, 0, C, C, Math.round(x - ax * S), Math.round(y - ay * S), C * S, C * S);
+  ctx.drawImage(
+    adamImgs[pose.sheet], pose.frame * sh.cellW, 0, sh.cellW, sh.cellH,
+    Math.round(x - ax * S), Math.round(y - ay * S - bob), sh.cellW * S, sh.cellH * S
+  );
   ctx.restore();
 
   // označený (Fotograf) boss má nad sebou žlutou šipku
@@ -609,8 +626,9 @@ function drawAdam(ctx, b, now) {
 // Nakreslí snímek VFX se středem v (x, y), případně otočený (0 = doprava) a průhledný
 function drawVfx(ctx, sheet, frame, x, y, scale, angle = 0, alpha = 1) {
   const img = adamImgs[sheet];
-  const [ax, ay] = ADAM.anchors[sheet][frame];
-  const W = ADAM.vfxCell, H = ADAM.vfxCellH;
+  const sh = adamAtlas[sheet];
+  const [ax, ay] = sh.anchors[frame];
+  const W = sh.cellW, H = sh.cellH;
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.translate(Math.round(x), Math.round(y));
@@ -994,6 +1012,7 @@ function frame(now) {
   // HUD
   if (connected) {
     let hudText = `Hráči online: ${players.size}  |  Enemáci na mapě: ${enemies.size}  |  Obtížnost: úroveň ${difficultyLevel}\n`;
+    if (adamIn != null) hudText += `Boss Adam přijde za ${Math.floor(adamIn / 60)}:${String(adamIn % 60).padStart(2, "0")}\n`;
     const boss = [...enemies.values()].find((e) => e.boss);
     if (boss) hudText += `⚠ BOSS ${boss.name}: ${Math.ceil(boss.hp)}/${Math.ceil(boss.maxHp)} HP\n`;
     if (me) {
