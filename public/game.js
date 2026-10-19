@@ -494,6 +494,36 @@ function updateBuffPicker(me) {
   buffPicker.classList.add("show");
 }
 
+// ---------- Lišta XP dole na obrazovce ----------
+const xpBar = document.getElementById("xpBar");
+const xpFill = document.getElementById("xpFill");
+const xpTxt = document.getElementById("xpTxt");
+const xpLvl = document.getElementById("xpLvl");
+let shownXp = ""; // aby se DOM neměnil každý snímek
+let shownLevel = 0;
+
+function updateXpBar(me) {
+  if (!me) { xpBar.classList.remove("show"); return; }
+  xpBar.classList.add("show");
+  const maxed = me.level >= BUFFS.MAX_LEVEL;
+  const key = `${me.level}|${me.xp}|${me.xpNext}|${me.pendingPicks}`;
+  if (key === shownXp) return;
+  shownXp = key;
+
+  xpLvl.textContent = `LVL ${me.level}`;
+  xpFill.style.width = (maxed ? 100 : Math.min(100, (me.xp / me.xpNext) * 100)) + "%";
+  xpTxt.textContent = maxed
+    ? "MAX LEVEL"
+    : `${me.xp} / ${me.xpNext} XP  ·  zbývá ${me.xpNext - me.xp}` + (me.pendingPicks > 0 ? "  ·  vyber si buff!" : "");
+
+  if (shownLevel && me.level > shownLevel) {
+    xpBar.classList.remove("levelup");
+    void xpBar.offsetWidth; // restart animace
+    xpBar.classList.add("levelup");
+  }
+  shownLevel = me.level;
+}
+
 // ---------- Kreslení ----------
 function resize() {
   canvas.width = innerWidth;
@@ -676,10 +706,6 @@ function frame(now) {
     if (me) {
       const hearts = "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
       hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
-      // level hráče a XP
-      const filled = Math.round(((me.xp || 0) / me.xpNext) * 10);
-      const bar = "▮".repeat(Math.max(0, Math.min(10, filled))) + "▯".repeat(10 - Math.max(0, Math.min(10, filled)));
-      hudText += `LVL ${me.level}  ${bar}  ${me.xp}/${me.xpNext} XP\n`;
       const owned = BUFFS.LIST.filter((b) => me.buffs && me.buffs[b.id]).map((b) => `${b.icon}×${me.buffs[b.id]}`);
       if (me.buffs && me.buffs.shield) owned.push(`(štít ${me.shield}/${me.buffs.shield})`);
       if (owned.length) hudText += `Buffy: ${owned.join("  ")}\n`;
@@ -702,6 +728,7 @@ function frame(now) {
   }
 
   updateBuffPicker(me);
+  updateXpBar(me);
 
   requestAnimationFrame(frame);
 }
