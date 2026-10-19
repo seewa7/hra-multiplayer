@@ -9,4 +9,5 @@
 - [ ] Hra se spustí a funguje (`npm start`)
 - [ ] Pokud jsem měnil protokol zpráv nebo sdílené konstanty, upravil jsem `server.js` i `public/game.js`
 - [ ] Nejsou tu žádná hesla, tokeny ani `node_modules/`
+- [ ] Přidávám/měním třídu hrdiny → splnil jsem checklist z `CLASSES.md` (XP, buffy, cooldowny)
 - [ ] Čeká na schválení od jiného člověka (neměrguji sám)

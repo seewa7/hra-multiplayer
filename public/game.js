@@ -122,6 +122,15 @@ function setKey(code, pressed) {
 const ABILITY_KEYS = { KeyQ: "q", KeyE: "e" };
 
 addEventListener("keydown", (e) => {
+  // výběr buffu klávesami 1 / 2 / 3
+  const pick = /^(Digit|Numpad)([1-3])$/.exec(e.code);
+  const meNow = players.get(myId);
+  if (pick && meNow && meNow.offer) {
+    const id = meNow.offer[Number(pick[2]) - 1];
+    if (id) send({ type: "pickBuff", id });
+    e.preventDefault();
+    return;
+  }
   if (ABILITY_KEYS[e.code] && myId !== null) {
     if (!e.repeat) send({ type: "ability", slot: ABILITY_KEYS[e.code] });
     e.preventDefault();
@@ -407,6 +416,27 @@ function drawCoin(ctx, x, y, now) {
   ctx.fillRect(x - 1, floatY - 4, 2, 2);
 }
 
+function drawGem(ctx, x, y, now, value) {
+  // XP krystal: čím víc XP, tím větší
+  const r = value >= 5 ? 5 : value >= 3 ? 4 : 3;
+  const floatY = y + Math.sin(now / 220 + x) * 2;
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(x - r, y - 1, r * 2, 2);
+  const cy = Math.round(floatY) - r - 2;
+  // kosočtverec po řádcích
+  for (let i = -r; i <= r; i++) {
+    const w = r - Math.abs(i);
+    ctx.fillStyle = "#1b7fd1";
+    ctx.fillRect(x - w, cy + i, w * 2 + 1, 1);
+    if (w > 0) {
+      ctx.fillStyle = "#4cc9ff";
+      ctx.fillRect(x - w + 1, cy + i, Math.max(1, w * 2 - 1), 1);
+    }
+  }
+  ctx.fillStyle = "#e8fbff";
+  ctx.fillRect(x - 1, cy - r + 2, 1, 1);
+}
+
 function drawHeart(ctx, x, y, now) {
   const floatY = y + Math.sin(now / 200 + x) * 2;
   // stín srdíčka
@@ -424,6 +454,44 @@ function drawHeart(ctx, x, y, now) {
   // odlesk
   ctx.fillStyle = "#ff7675";
   ctx.fillRect(x - 2, floatY - 5, 1, 1);
+}
+
+// ---------- Výběr buffu po postupu na další level ----------
+const buffPicker = document.getElementById("buffPicker");
+const buffCards = document.getElementById("buffCards");
+const buffTitle = document.getElementById("buffTitle");
+let shownOffer = ""; // aby se karty nepřekreslovaly každý snímek
+
+function updateBuffPicker(me) {
+  const offer = me && me.offer;
+  if (!offer) {
+    if (shownOffer) { buffPicker.classList.remove("show"); shownOffer = ""; }
+    return;
+  }
+  const key = offer.join(",") + "|" + me.pendingPicks + "|" + me.level;
+  if (key === shownOffer) return;
+  shownOffer = key;
+
+  buffTitle.textContent = `LEVEL ${me.level}!` + (me.pendingPicks > 1 ? `  (čeká ${me.pendingPicks} výběrů)` : "");
+  buffCards.textContent = "";
+  offer.forEach((id, i) => {
+    const b = BUFFS.byId[id];
+    const have = (me.buffs && me.buffs[id]) || 0;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    for (const [cls, text] of [
+      ["icon", b.icon], ["name", b.name], ["desc", b.desc],
+      ["have", have ? `máš ×${have} → ×${have + 1} (max ${b.max})` : `max ${b.max}`], ["key", `[${i + 1}]`],
+    ]) {
+      const el = document.createElement("div");
+      el.className = cls;
+      el.textContent = text;
+      btn.appendChild(el);
+    }
+    btn.addEventListener("click", () => { send({ type: "pickBuff", id }); btn.blur(); });
+    buffCards.appendChild(btn);
+  });
+  buffPicker.classList.add("show");
 }
 
 // ---------- Kreslení ----------
@@ -504,6 +572,15 @@ function frame(now) {
       }
       ctx.globalAlpha = 1.0;
 
+      // buff Štít: modrý kruh kolem hráče, dokud je štít nabitý
+      if (p.shield > 0) {
+        ctx.strokeStyle = "rgba(120, 205, 255, 0.85)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(x, y - (p.cls === "photographer" ? 9 : 7), 10, p.cls === "photographer" ? 13 : 11, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
       // vizuální efekt útoku
       if (p.attacking) {
         drawAttackSlash(ctx, x, y, p.dir);
@@ -558,6 +635,8 @@ function frame(now) {
       if (it.fading && Math.floor(now / 150) % 2 === 0) continue;
       if (it.type === "coin") {
         drawCoin(ctx, Math.round(it.x), Math.round(it.y), now);
+      } else if (it.type === "xp") {
+        drawGem(ctx, Math.round(it.x), Math.round(it.y), now, it.value || 1);
       } else if (it.type === "heart") {
         drawHeart(ctx, Math.round(it.x), Math.round(it.y), now);
       }
@@ -597,6 +676,13 @@ function frame(now) {
     if (me) {
       const hearts = "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
       hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
+      // level hráče a XP
+      const filled = Math.round(((me.xp || 0) / me.xpNext) * 10);
+      const bar = "▮".repeat(Math.max(0, Math.min(10, filled))) + "▯".repeat(10 - Math.max(0, Math.min(10, filled)));
+      hudText += `LVL ${me.level}  ${bar}  ${me.xp}/${me.xpNext} XP\n`;
+      const owned = BUFFS.LIST.filter((b) => me.buffs && me.buffs[b.id]).map((b) => `${b.icon}×${me.buffs[b.id]}`);
+      if (me.buffs && me.buffs.shield) owned.push(`(štít ${me.shield}/${me.buffs.shield})`);
+      if (owned.length) hudText += `Buffy: ${owned.join("  ")}\n`;
       if (me.cls === "photographer") {
         const ab = CLASSES.photographer.abilities;
         const cd = (name) => (me.cd && me.cd[name] > 0 ? (me.cd[name] / 1000).toFixed(1) + " s" : "připraveno");
@@ -610,10 +696,12 @@ function frame(now) {
     hudText += `Žebříček:\n`;
     hudText += [...players.values()]
       .sort((a, b) => (b.score || 0) - (a.score || 0))
-      .map((p) => `• ${p.name}: ${p.score || 0} bodů (${p.hp || 0}/${p.maxHp || 3} HP)`)
+      .map((p) => `• ${p.name} (LVL ${p.level || 1}): ${p.score || 0} bodů (${p.hp || 0}/${p.maxHp || 3} HP)`)
       .join("\n");
     hud.textContent = hudText;
   }
+
+  updateBuffPicker(me);
 
   requestAnimationFrame(frame);
 }
