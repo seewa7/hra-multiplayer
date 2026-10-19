@@ -78,3 +78,24 @@ Všechna čísla jsou v objektu `DIFFICULTY` nahoře v `server.js`.
 - **Nová akce hráče** (např. střelba): v `game.js` pošli `send({ type: "shoot" })`, v `server.js` ji zpracuj v `ws.on("message")`.
 - **Nový herní objekt** (mince, nepřátelé): ulož ho na serveru, posílej ve zprávě `state` a v `game.js` ho nakresli ve funkci `frame`.
 - **Velikost mapy**: `MAP_W` / `MAP_H` – musí být stejné v `server.js` i `game.js`.
+
+## XP, levely a buffy
+
+Z každého poraženého nepřítele vypadne **XP krystal** (zelený sliz 2 XP, ohnivý 3, obří 6), mince dávají 1 XP.
+Za XP hráč postupuje o level (na další level je potřeba 5, 9, 13, ... XP, max. level 20) a při každém postupu
+si **vybere 1 ze 3 náhodných buffů** (kliknutím nebo klávesou 1 / 2 / 3, hra se nezastavuje):
+
+| Buff | Efekt | Max |
+|---|---|---|
+| ❤️ Srdce navíc | +1 max. život a hned se doplní | 5 |
+| ⚔️ Větší síla | +30 % poškození | 5 |
+| 👟 Rychlé nohy | +12 % rychlost pohybu | 4 |
+| 🛡️ Štít | zablokuje 1 zásah, dobije se za 10 s | 3 |
+| ⚡ Rychlejší útoky | -20 % cooldowny | 3 |
+| 🧲 Magnet | +50 % dosah sbírání | 3 |
+| 💚 Regenerace | +1 život každých ~20 s | 3 |
+
+Definice a čísla jsou v `public/shared/buffs.js` (načítá server i klient), logika v `server.js`
+(`addXp`, `nextOffer`, `applyBuff`). **Nový buff:** přidej ho do `LIST` v `buffs.js` a jeho efekt na místo, kde se používá
+(např. `BUFFS.damageMult` v `hurtEnemy`). Server posílá v `state` u hráče `level`, `xp`, `xpNext`, `buffs`, `shield`, `offer`, `pendingPicks`;
+klient posílá `{type: "pickBuff", id}`.

@@ -11,6 +11,7 @@ const path = require("path");
 const os = require("os");
 const { WebSocketServer } = require("ws");
 const CLASSES = require("./public/shared/classes.js"); // sdílené s klientem
+const BUFFS = require("./public/shared/buffs.js"); // buffy a XP, sdílené s klientem
 
 const PORT = 3000;
 const TICK_RATE = 30; // kolikrát za sekundu se hra přepočítá
@@ -27,7 +28,7 @@ const ITEM_LIFETIME_MS = 30000; // po této době předmět zmizí
 const ITEM_FADING_MS = 5000; // posledních pár vteřin předmět bliká
 const ITEM_SPAWN_INTERVAL = 6; // jak často (s) se na mapě objeví nový předmět
 const ITEM_SPAWN_LIMIT = 8; // náhodné doplňování se zastaví, když je na mapě tolik předmětů
-const ITEM_HARD_LIMIT = 16; // absolutní strop (i s předměty z nepřátel), nejstarší zmizí
+const ITEM_HARD_LIMIT = 30; // absolutní strop (i s předměty z nepřátel), nejstarší zmizí
 const ENEMY_DROP_CHANCE = 0.7; // šance, že poražený nepřítel upustí předmět
 const COIN_CHANCE_DROP = 0.65; // z dropu je tolik procent mince, zbytek srdce
 const COIN_CHANCE_RANDOM = 0.7; // totéž pro předměty náhodně na louce
@@ -85,9 +86,9 @@ const DIFFICULTY = {
 
 // Definice nepřátel (základní enemáci - slizouni s různými vlastnostmi)
 const ENEMY_DEFS = [
-  { type: "slime_green", name: "Zelený sliz", color: "#2ecc71", eyeColor: "#1b5e20", speed: 45, maxHp: 2, size: 10 },
-  { type: "slime_red",   name: "Ohnivý sliz", color: "#e74c3c", eyeColor: "#7f1d1d", speed: 65, maxHp: 3, size: 11 },
-  { type: "slime_purple",name: "Obří sliz",   color: "#9b59b6", eyeColor: "#4a148c", speed: 35, maxHp: 5, size: 14 },
+  { type: "slime_green", name: "Zelený sliz", color: "#2ecc71", eyeColor: "#1b5e20", speed: 45, maxHp: 2, size: 10, xp: 2 },
+  { type: "slime_red",   name: "Ohnivý sliz", color: "#e74c3c", eyeColor: "#7f1d1d", speed: 65, maxHp: 3, size: 11, xp: 3 },
+  { type: "slime_purple",name: "Obří sliz",   color: "#9b59b6", eyeColor: "#4a148c", speed: 35, maxHp: 5, size: 14, xp: 6 },
 ];
 
 let nextEnemyId = 1;
@@ -129,6 +130,7 @@ function spawnEnemy(defIndex) {
     hp: def.maxHp,
     maxHp: def.maxHp,
     size: def.size,
+    xp: def.xp, // kolik XP upustí po smrti
     ...safeSpawnPosition(),
     dir: "down",
     moving: true,
@@ -153,7 +155,7 @@ for (let i = 0; i < DIFFICULTY.startEnemies; i++) {
 let nextItemId = 1;
 const items = new Map(); // id -> { id, type, x, y }
 
-function spawnItem(type, x, y) {
+function spawnItem(type, x, y, value) {
   // strop na počet předmětů – když je plno, zmizí ten nejstarší
   while (items.size >= ITEM_HARD_LIMIT) {
     items.delete(items.keys().next().value);
@@ -161,7 +163,8 @@ function spawnItem(type, x, y) {
   const id = nextItemId++;
   items.set(id, {
     id,
-    type, // "coin" (mince) nebo "heart" (srdíčko pro doplnění HP)
+    type, // "coin" (mince), "heart" (srdíčko pro doplnění HP) nebo "xp" (krystal s XP)
+    value, // jen u "xp": kolik XP dá
     x: Math.round(x * 10) / 10,
     y: Math.round(y * 10) / 10,
     expiresAt: Date.now() + ITEM_LIFETIME_MS,
@@ -180,9 +183,60 @@ for (let i = 0; i < 6; i++) {
   spawnRandomItem();
 }
 
+// ---------- XP, levely a buffy hráče ----------
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Připraví hráči nabídku 3 buffů, pokud mu nějaký výběr čeká a žádnou nabídku ještě nemá
+function nextOffer(p) {
+  while (!p.offer && p.pendingPicks > 0) {
+    const pool = BUFFS.LIST.filter((b) => (p.buffs[b.id] || 0) < b.max).map((b) => b.id);
+    if (pool.length === 0) {
+      // všechno je na maximu -> náhrada v bodech
+      p.score = (p.score || 0) + 5 * p.pendingPicks;
+      p.pendingPicks = 0;
+      return;
+    }
+    p.offer = shuffle(pool).slice(0, 3);
+  }
+}
+
+function addXp(p, amount) {
+  if (!amount || p.level >= BUFFS.MAX_LEVEL) return;
+  p.xp += amount;
+  while (p.level < BUFFS.MAX_LEVEL && p.xp >= BUFFS.xpForNext(p.level)) {
+    p.xp -= BUFFS.xpForNext(p.level);
+    p.level++;
+    p.pendingPicks++;
+  }
+  if (p.level >= BUFFS.MAX_LEVEL) p.xp = 0;
+  nextOffer(p);
+}
+
+function applyBuff(p, id) {
+  const def = BUFFS.byId[id];
+  if (!def || (p.buffs[id] || 0) >= def.max) return false;
+  p.buffs[id] = (p.buffs[id] || 0) + 1;
+  if (id === "heart") {
+    p.maxHp += 1;
+    p.hp += 1;
+  } else if (id === "shield") {
+    p.shield += 1; // nový štít je hned nabitý
+  } else if (id === "regen") {
+    p.regenAt = Date.now() + BUFFS.regenIntervalMs(p.buffs.regen);
+  }
+  return true;
+}
+
 // Společné zranění nepřítele (hrdina i fotograf). Řeší označení, smrt, skóre a loot.
 function hurtEnemy(e, dmg, player, now, knockback) {
   if (e.hp <= 0) return;
+  dmg *= BUFFS.damageMult(player.buffs); // buff Větší síla
   if (now < e.markedUntil) dmg *= CLASSES.MARK_BONUS;
   e.hp -= dmg;
   e.hitUntil = now + 200;
@@ -200,6 +254,9 @@ function hurtEnemy(e, dmg, player, now, knockback) {
     e.hp = 0;
     player.score = (player.score || 0) + 1;
     e.respawnTimer = 4; // oživí se za 4 vteřiny
+
+    // XP krystal vypadne z každého poraženého nepřítele
+    spawnItem("xp", e.x, e.y, e.xp);
 
     // Šance na vypadnutí lootu z poraženého nepřítele
     if (Math.random() < ENEMY_DROP_CHANCE) {
@@ -224,7 +281,7 @@ function startAbility(p, name, now) {
   if (p.action && now < p.action.endAt) return; // předchozí animace ještě běží
   if (now < p.cooldowns[name]) return; // cooldown
 
-  p.cooldowns[name] = now + ab.cooldown;
+  p.cooldowns[name] = now + ab.cooldown * BUFFS.cooldownMult(p.buffs); // buff Rychlejší útoky
   p.action = {
     id: ++p.actionSeq,
     name,
@@ -306,6 +363,14 @@ wss.on("connection", (ws) => {
         invulnerableUntil: Date.now() + DIFFICULTY.joinProtectionMs, // chvíli po vstupu nezranitelný
         attackUntil: 0,
         lastAttack: 0,
+        level: 1,
+        xp: 0,
+        buffs: {}, // id buffu -> kolikrát vybrán
+        shield: 0, // aktuálně nabité štíty
+        shieldAt: 0, // kdy se dobije další štít
+        regenAt: 0, // kdy přibude další život z Regenerace
+        pendingPicks: 0, // kolik výběrů buffu na hráče čeká
+        offer: null, // aktuální nabídka 3 buffů (nebo null)
         action: null, // běžící schopnost třídy (Fotograf)
         actionSeq: 0,
         cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
@@ -330,7 +395,7 @@ wss.on("connection", (ws) => {
       const now = Date.now();
       if (player.cls === "photographer") {
         startAbility(player, "snapshot", now); // základní útok Fotografa
-      } else if (now - player.lastAttack > 300) {
+      } else if (now - player.lastAttack > 300 * BUFFS.cooldownMult(player.buffs)) {
         player.lastAttack = now;
         player.attackUntil = now + 180;
 
@@ -350,6 +415,13 @@ wss.on("connection", (ws) => {
           if (dist < 22 || touching) hurtEnemy(e, 1, player, now, true);
         }
       }
+    }
+
+    // Hráč si vybral buff z nabídky po postupu na další level
+    if (msg.type === "pickBuff" && player && player.offer && player.offer.includes(msg.id)) {
+      if (applyBuff(player, msg.id)) player.pendingPicks--;
+      player.offer = null;
+      nextOffer(player);
     }
 
     // Schopnost třídy na klávesách Q / E (zatím jen Fotograf)
@@ -417,8 +489,9 @@ setInterval(() => {
       dy *= Math.SQRT1_2;
     }
 
-    p.x += dx * SPEED * dt;
-    p.y += dy * SPEED * dt;
+    const speed = SPEED * BUFFS.speedMult(p.buffs); // buff Rychlé nohy
+    p.x += dx * speed * dt;
+    p.y += dy * speed * dt;
 
     // nepustit hráče z mapy
     p.x = Math.max(8, Math.min(MAP_W * TILE - 8, p.x));
@@ -524,7 +597,12 @@ setInterval(() => {
       const hitRadius = (e.size || 10) + 6;
 
       if (!stunned && dist < hitRadius && now > p.invulnerableUntil) {
-        p.hp -= 1;
+        if (p.shield > 0) {
+          p.shield--; // štít zásah zablokuje
+          p.shieldAt = now + BUFFS.SHIELD_RECHARGE_MS;
+        } else {
+          p.hp -= 1;
+        }
         p.invulnerableUntil = now + 1200; // 1.2s imunita proti další ráně
 
         // Odhození hráče od nepřítele
@@ -546,14 +624,30 @@ setInterval(() => {
     }
   }
 
+  // 3b2) Buffy: dobíjení štítů a regenerace životů
+  for (const p of players.values()) {
+    if (p.shield < (p.buffs.shield || 0) && now >= p.shieldAt) {
+      p.shield++;
+      p.shieldAt = now + BUFFS.SHIELD_RECHARGE_MS;
+    }
+    if (p.buffs.regen && now >= p.regenAt) {
+      if (p.hp > 0 && p.hp < p.maxHp) p.hp++;
+      p.regenAt = now + BUFFS.regenIntervalMs(p.buffs.regen);
+    }
+  }
+
   // 3c) Sbírání předmětů (lootu) hráči a obnova na mapě
   for (const p of players.values()) {
     if (p.hp <= 0) continue;
     for (const [itemId, item] of items.entries()) {
       const dist = Math.hypot(p.x - item.x, p.y - item.y);
-      if (dist < ITEM_PICKUP_RADIUS) {
-        if (item.type === "coin") {
+      if (dist < ITEM_PICKUP_RADIUS * BUFFS.pickupMult(p.buffs)) {
+        if (item.type === "xp") {
+          addXp(p, item.value);
+          items.delete(itemId);
+        } else if (item.type === "coin") {
           p.score = (p.score || 0) + 1;
+          addXp(p, 1); // mince dává i 1 XP
           items.delete(itemId);
         } else if (item.type === "heart") {
           if (p.hp < p.maxHp) {
@@ -582,10 +676,11 @@ setInterval(() => {
   const state = JSON.stringify({
     type: "state",
     level,
-    players: [...players.values()].map(({ input, action, cooldowns, actionSeq, ...rest }) => {
+    players: [...players.values()].map(({ input, action, cooldowns, actionSeq, shieldAt, regenAt, ...rest }) => {
       const busy = action && now < action.endAt;
       return {
         ...rest,
+        xpNext: BUFFS.xpForNext(rest.level),
         invulnerable: now < rest.invulnerableUntil,
         attacking: now < rest.attackUntil,
         // animace: klient podle toho vybírá snímky (čas od začátku akce posíláme, ne absolutní čas)
@@ -624,6 +719,7 @@ setInterval(() => {
       type: it.type,
       x: it.x,
       y: it.y,
+      value: it.value,
       fading: it.expiresAt - now < ITEM_FADING_MS, // klient pak předmět nechá blikat
     })),
   });
