@@ -1,0 +1,136 @@
+{
+  "sheets": {
+    "neural": {
+      "file": "boss-neural.png",
+      "cols": 3,
+      "cellW": 828,
+      "cellH": 725,
+      "anchors": [
+        [
+          414,
+          630
+        ],
+        [
+          414,
+          630
+        ],
+        [
+          414,
+          630
+        ]
+      ]
+    },
+    "barbell": {
+      "file": "boss-barbell.png",
+      "cols": 3,
+      "cellW": 912,
+      "cellH": 725,
+      "anchors": [
+        [
+          456,
+          626
+        ],
+        [
+          456,
+          626
+        ],
+        [
+          456,
+          626
+        ]
+      ]
+    },
+    "overclock": {
+      "file": "boss-overclock.png",
+      "cols": 3,
+      "cellW": 828,
+      "cellH": 724,
+      "anchors": [
+        [
+          414,
+          628
+        ],
+        [
+          414,
+          628
+        ],
+        [
+          414,
+          628
+        ]
+      ]
+    },
+    "vfxNeural": {
+      "file": "vfx-neural.png",
+      "cols": 4,
+      "cellW": 676,
+      "cellH": 757,
+      "anchors": [
+        [
+          338,
+          396
+        ],
+        [
+          338,
+          396
+        ],
+        [
+          338,
+          396
+        ],
+        [
+          338,
+          396
+        ]
+      ]
+    },
+    "vfxShock": {
+      "file": "vfx-shockwave.png",
+      "cols": 4,
+      "cellW": 686,
+      "cellH": 737,
+      "anchors": [
+        [
+          343,
+          407
+        ],
+        [
+          343,
+          407
+        ],
+        [
+          343,
+          407
+        ],
+        [
+          343,
+          407
+        ]
+      ]
+    },
+    "vfxOverclock": {
+      "file": "vfx-overclock.png",
+      "cols": 4,
+      "cellW": 670,
+      "cellH": 736,
+      "anchors": [
+        [
+          335,
+          362
+        ],
+        [
+          335,
+          362
+        ],
+        [
+          335,
+          362
+        ],
+        [
+          335,
+          362
+        ]
+      ]
+    }
+  }
+}

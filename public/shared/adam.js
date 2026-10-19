@@ -11,9 +11,10 @@
   return {
     name: "Adam — AI & Gym Overlord",
 
-    // Kdy se boss objeví. Je to čas hry s aspoň jedním hráčem (s). 0 = hned na začátku.
-    // Později stačí číslo zvýšit, třeba na 120 = po dvou minutách.
-    spawnAfterSec: 0,
+    // Kdy se boss objeví: po tolika sekundách hry (počítá se jen, když je ve hře aspoň jeden hráč).
+    // 0 = hned na začátku, 300 = po pěti minutách. Když se boss objeví, běžní nepřátelé zmizí
+    // a nové se objevují, až když je boss poražen.
+    spawnAfterSec: 300,
 
     // Boss stojí na jednom místě: střed mapy + tenhle posun
     offset: { x: 0, y: -70 },
@@ -62,7 +63,7 @@
         flashMs: 80, // VFX snímek 1 (centrální náraz)
         expandMs: 200, // VFX snímek 2 (expandující prstenec = hlavní damage)
         decayMs: 180, // VFX snímek 3
-        radius: 90, // vodorovný poloměr prstence (px)
+        radius: 96, // vodorovný poloměr prstence (px)
         aspect: 0.4, // svislý poloměr = radius * aspect (sprite je kreslený jako elipsa)
         thickness: 0.15, // tloušťka prstence (podíl poloměru)
         damage: 1,
@@ -89,23 +90,10 @@
     },
 
     // Kreslení: měřítko (pixely mapy na jeden pixel obrázku) – jen vzhled
+    bob: { amplitude: 1.3, periodMs: 1700 }, // lehké pohupování bosse (px mapy, ms)
     scale: { boss: 0.11, neural: 0.11, barbell: 0.33, overclock: 0.11 },
 
-    // Rozměry buněk ve spritesheetech
-    bossCell: 724,
-    vfxCell: 543,
-    vfxCellH: 724,
-
-    // Kotvy snímků (px v buňce): boss = střed mezi chodidly, VFX = střed efektu.
-    // Změřeno z obrázků (sheety nemají postavu ve všech snímcích na stejném místě,
-    // proto se každý snímek zarovná podle chodidel, aby boss neposkakoval).
-    anchors: {
-      neural: [[307, 629], [377, 629], [356, 629]],
-      barbell: [[337, 626], [254, 626], [274, 636]],
-      overclock: [[340, 628], [332, 628], [332, 628]],
-      vfxNeural: [[280, 367], [240, 375], [278, 396], [245, 363]],
-      vfxShock: [[290, 407], [271, 388], [271, 396], [253, 394]],
-      vfxOverclock: [[323, 350], [260, 356], [272, 358], [253, 363]],
-    },
+    // Rozměry buněk a kotvy snímků jsou v public/assets/adam/atlas.json
+    // (vyrábí je tools/build_adam_atlas.py ze zdrojových sheetů v assets-src/adam/)
   };
 });

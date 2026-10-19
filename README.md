@@ -60,8 +60,9 @@ Velikost postavy ve hře se mění konstantou `PHOTO_SCALE` v `public/game.js`.
 
 ## Boss Adam
 
-**Adam — AI & Gym Overlord** stojí uprostřed arény (nad středem mapy) a nehýbe se. Zatím se objeví **hned na začátku hry**
-(`spawnAfterSec: 0` v `public/shared/adam.js`; až se bude testovat časování, stačí to číslo zvýšit). Má lištu životů vpravo nahoře
+**Adam — AI & Gym Overlord** stojí uprostřed arény (nad středem mapy) a nehýbe se. Objeví se **po 5 minutách hry** s aspoň jedním hráčem
+(`spawnAfterSec: 300` v `public/shared/adam.js`, 0 = hned; v HUD je odpočet). **Když se boss objeví, všichni ostatní nepřátelé zmizí** a nové
+se objevují, až když je boss poražen. Boss má stín a lehce se pohupuje (`ADAM.bob`). Má lištu životů vpravo nahoře
 a fáze podle zbývajících životů:
 1. **Fáze 1 (100–61 %)** – jen **Neural Network**: datový projektil letí na pozici hráče v okamžiku výstřelu (značka dopadu je vidět),
    při dopadu výbuch a neuronová past na 3 s (zpomaluje a občas zraní).
@@ -72,7 +73,8 @@ a fáze podle zbývajících životů:
 Stejný útok nejde víc než dvakrát po sobě a cíl se střídá mezi živými hráči. Životy rostou s počtem hráčů (×1,65 pro dva).
 Po porážce boss přestane útočit, efekty zmizí a ukáže se „VÍTĚZSTVÍ!“. Všechna čísla (HP, poškození, cooldowny, telegraphy, rychlosti,
 životnost zón, kotvy snímků) jsou v `public/shared/adam.js`, logika v `server.js` (`updateAdam`, `startAdamAttack`, `updateAdamFx`),
-vykreslení v `public/game.js`. Sprity jsou v `public/assets/adam/` (zdrojový concept v `assets-src/adam/`).
+vykreslení v `public/game.js`. Sprity: původní sheety jsou v `assets-src/adam/`, hotové atlasy v `public/assets/adam/` – vyrábí je `python3 tools/build_adam_atlas.py`
+(snímky v sheetech přetékají přes hranice buněk, proto se hledají podle mezer v průhlednosti a ne po pevné mřížce; potřebuje `pip3 install pillow numpy scipy`).
 
 ## Obtížnost (vlny jako ve Survivor.io)
 
