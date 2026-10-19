@@ -23,7 +23,16 @@
       id: "hero",
       name: "Hrdina",
       description: "Meč, který zabere na blízko",
-      // Hrdina používá původní útok (Mezerník / klik), bez schopností.
+      // Základní útok (Mezerník / klik): zasáhne všechny nepřátele kolem postavy dokola (360°),
+      // je jedno, kam se hrdina dívá.
+      attack: {
+        label: "Úder",
+        cooldown: 300, // ms
+        damage: 1,
+        range: 34, // dosah od středu postavy (px na mapě), + půlka velikosti nepřítele
+        knockback: true,
+      },
+      // Hrdina nemá žádné další schopnosti.
       abilities: {},
     },
 
@@ -41,8 +50,8 @@
           hitFrame: 1,
           cooldown: 450,
           damage: 0.6,
-          range: 38, // dosah kužele (px na mapě)
-          minDot: 0.7, // šířka kužele (cos úhlu) ≈ ±45°
+          range: 38, // dosah (px na mapě)
+          minDot: -1, // -1 = zasáhne dokola (360°), je jedno, kam se Fotograf dívá
         },
         // Silný blesk – široký prostor před fotografem, omráčí a zpomalí
         strong_flash: {

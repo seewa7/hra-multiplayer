@@ -40,7 +40,9 @@ Obecná pravidla (větve, PR, revize) jsou v `AGENTS.md`, tady jsou jen pravidla
    a v popisu vysvětli proč.
 9. **Třídně specifické buffy zatím nejsou podporované** (nabídka vybírá ze všech buffů stejně).
    Pokud chceš buff jen pro svou třídu, nejdřív to domluv v týmu a přidej filtr do `nextOffer` ve vlastním PR.
-10. **Nerozbij hrdinu ani ostatní třídy.** Po změně vyzkoušej, že původní třídy fungují stejně jako dřív.
+10. **Základní útok (Mezerník / klik) každé třídy zasahuje dokola (360°)** – je jedno, kam se postava dívá.
+    Dosah se počítá od středu postavy. Směr smí hrát roli jen u dalších schopností (Q / E).
+11. **Nerozbij hrdinu ani ostatní třídy.** Po změně vyzkoušej, že původní třídy fungují stejně jako dřív.
 
 ## Vyváženost (hrubé mantinely)
 
@@ -90,6 +92,7 @@ Spusť hru a **se dvěma hráči (dvě záložky)** projdi:
 - [ ] Po postupu na level se objeví **výběr buffu** a po výběru **každý buff opravdu působí**
       na tvou třídu: ⚔️ poškození, ⚡ cooldowny (i tvých schopností), 👟 rychlost, 🛡️ štít blokuje zásah,
       ❤️ srdce navíc, 🧲 magnet.
+- [ ] Základní útok zasáhne nepřítele ze všech stran (i za zády), mimo dosah nezasáhne.
 - [ ] Cooldowny a zákaz spamování fungují, jeden zásah se nevyhodnotí dvakrát, směr je při útoku zamčený.
 - [ ] Druhý hráč vidí animace a efekty tvé třídy.
 - [ ] Hrdina a ostatní třídy fungují jako dřív.
