@@ -40,6 +40,24 @@ Tu adresu ostatní otevřou v prohlížeči (funguje i z mobilu, ale ovládá se
 
 Server je „šéf“ – rozhoduje o všem důležitém. Díky tomu všichni vidí to samé a nikdo nemůže podvádět.
 
+## Třídy hrdinů
+
+Při vstupu do hry si hráč vybere třídu. Zatím jsou dvě:
+
+| Třída | Ovládání |
+|---|---|
+| **Hrdina** | Mezerník / klik: úder mečem |
+| **Fotograf** | Mezerník / klik: **Momentka** (kužel před sebou, označí cíl na 3 s, označený dostává o 15 % víc poškození) · **Q**: **Silný blesk** (omráčí a zpomalí, cooldown 7 s) · **E**: **Perfektní záběr** (dlouhý paprsek, zasáhne všechny v řadě a označí je, cooldown 14 s) |
+
+Časování animací, cooldowny, dosahy a poškození všech tříd jsou v `public/shared/classes.js`.
+Klient jen pošle záměr (`attack` / `ability`), o zásahu, poškození a cooldownu rozhoduje server.
+
+**Nová třída:** přidej ji do `public/shared/classes.js`, do výběru v `public/index.html` a obsluhu schopností do `server.js` (`startAbility` / `resolveAction`).
+
+**Sprity Fotografa:** zdroje jsou v `assets-src/photographer/`, hotové atlasy v `public/assets/photographer/`.
+Znovu se vyrobí příkazem `python3 tools/build_photographer_atlas.py` (potřebuje `pip3 install pillow numpy scipy`).
+Velikost postavy ve hře se mění konstantou `PHOTO_SCALE` v `public/game.js`.
+
 ## Soubory
 
 | Soubor | Co dělá |
