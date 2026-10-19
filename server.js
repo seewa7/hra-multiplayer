@@ -203,12 +203,14 @@ wss.on("connection", (ws) => {
         for (const e of enemies) {
           if (e.hp <= 0) continue;
           const dist = Math.hypot(e.x - ax, e.y - ay);
-          if (dist < 22) {
+          // sliz, který se tě dotýká, jde zasáhnout z jakékoliv strany (i když je vedle nebo za tebou)
+          const touching = Math.hypot(e.x - player.x, e.y - player.y) < (e.size || 10) + 8;
+          if (dist < 22 || touching) {
             e.hp -= 1;
             e.hitUntil = now + 200;
 
             // Odhození nepřítele (knockback)
-            const angle = Math.atan2(e.y - player.y, e.x - player.x);
+            const angle = Math.atan2(e.y - player.y, e.x - player.x); // při přesném překryvu 0 = doprava
             e.x += Math.cos(angle) * 22;
             e.y += Math.sin(angle) * 22;
             e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
@@ -328,6 +330,22 @@ setInterval(() => {
 
     e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
     e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+
+    // Nepřítel nemůže projít skrz hráče: když se s ním překrývá, vytlačí se ven.
+    // (bodyDist je menší než hitRadius níž, takže se hráče pořád dotkne a kousne)
+    const bodyDist = (e.size || 10) + 4;
+    for (const p of players.values()) {
+      if (p.hp <= 0) continue;
+      let ox = e.x - p.x;
+      let oy = e.y - p.y;
+      let od = Math.hypot(ox, oy);
+      if (od >= bodyDist) continue;
+      if (od < 0.001) { ox = 1; oy = 0; od = 1; } // přesný překryv: vytlač kamkoliv
+      e.x = p.x + (ox / od) * bodyDist;
+      e.y = p.y + (oy / od) * bodyDist;
+      e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
+      e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
+    }
 
     e.moving = edx !== 0 || edy !== 0;
     if (Math.abs(edx) > Math.abs(edy)) {
