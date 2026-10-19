@@ -26,9 +26,8 @@ Obecná pravidla (větve, PR, revize) jsou v `AGENTS.md`, tady jsou jen pravidla
 3. **Pohyb jde přes společnou smyčku v `server.js`** (ta násobí `BUFFS.speedMult`). Nepiš si vlastní
    pohyb. Když třída něco jako dash nebo zrychlení potřebuje, **vynásob** rychlost, nepřepisuj ji.
 4. **Smrt hráče řeší jen `killPlayer`** (oživení po 30 s, konec hry, když zemřou všichni). Nikdy nenastavuj `hp = 0` ani neoživuj ručně.
-   **Zranění hráče musí respektovat štít a nezranitelnost.** Dnes je zranění hráče jen v smyčce nepřátel
-   (štít → pak životy → respawn). Pokud přidáš nový zdroj zranění hráčů (past, boss, PvP), nejdřív v samostatném PR
-   vytáhni zranění do jedné funkce `hurtPlayer` a používej ji. Nikdy neodečítej `p.hp` ručně jinde.
+   **Zranění hráče vždy přes `hurtPlayer(p, dmg, now, from, opts)`** (respektuje štít a nezranitelnost, řeší odhození a smrt).
+   Nikdy neodečítej `p.hp` ručně (používají ji slizi i útoky bosse Adama).
 5. **Životy a maximum nastavuje jen systém buffů.** `maxHp` ani `hp` nepřepisuj po vstupu do hry
    (buff Srdce navíc by se ztratil). Základní hodnoty třídy se nastaví jednou při `join`.
 6. **Server je šéf.** Klient pošle jen záměr (`attack`, `ability`), server rozhodne o zásahu, poškození

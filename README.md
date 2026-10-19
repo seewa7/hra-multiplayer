@@ -58,6 +58,22 @@ Klient jen pošle záměr (`attack` / `ability`), o zásahu, poškození a coold
 Znovu se vyrobí příkazem `python3 tools/build_photographer_atlas.py` (potřebuje `pip3 install pillow numpy scipy`).
 Velikost postavy ve hře se mění konstantou `PHOTO_SCALE` v `public/game.js`.
 
+## Boss Adam
+
+**Adam — AI & Gym Overlord** stojí uprostřed arény (nad středem mapy) a nehýbe se. Zatím se objeví **hned na začátku hry**
+(`spawnAfterSec: 0` v `public/shared/adam.js`; až se bude testovat časování, stačí to číslo zvýšit). Má lištu životů vpravo nahoře
+a fáze podle zbývajících životů:
+1. **Fáze 1 (100–61 %)** – jen **Neural Network**: datový projektil letí na pozici hráče v okamžiku výstřelu (značka dopadu je vidět),
+   při dopadu výbuch a neuronová past na 3 s (zpomaluje a občas zraní).
+2. **Fáze 2 (60–26 %)** – střídá Neural Network a **Barbell Shockwave**: varovný kruh na zemi, pak se kolem bosse rozběhne prstenec
+   (elipsa). Uhnout se dá z dosahu prstence, nebo když už prošel kolem tebe.
+3. **Fáze 3 (25–0 %)** – střídá všechny tři, útoky jsou o 15 % rychlejší; **Overclock Cables** vystřelí 2–4 výboje, každý je před výstřelem
+   označený pruhem na zemi, přímý zásah dává 2 zranění a zbyde zpomalující zóna.
+Stejný útok nejde víc než dvakrát po sobě a cíl se střídá mezi živými hráči. Životy rostou s počtem hráčů (×1,65 pro dva).
+Po porážce boss přestane útočit, efekty zmizí a ukáže se „VÍTĚZSTVÍ!“. Všechna čísla (HP, poškození, cooldowny, telegraphy, rychlosti,
+životnost zón, kotvy snímků) jsou v `public/shared/adam.js`, logika v `server.js` (`updateAdam`, `startAdamAttack`, `updateAdamFx`),
+vykreslení v `public/game.js`. Sprity jsou v `public/assets/adam/` (zdrojový concept v `assets-src/adam/`).
+
 ## Obtížnost (vlny jako ve Survivor.io)
 
 Nepřátelé **jdou pořád za nejbližším živým hráčem, ať je kdekoliv na mapě**. Nový se objevuje v kruhu těsně mimo obrazovku
