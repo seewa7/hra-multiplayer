@@ -131,3 +131,10 @@ Definice a čísla jsou v `public/shared/buffs.js` (načítá server i klient), 
 (`addXp`, `nextOffer`, `applyBuff`). **Nový buff:** přidej ho do `LIST` v `buffs.js` a jeho efekt na místo, kde se používá
 (např. `BUFFS.damageMult` v `hurtEnemy`). Server posílá v `state` u hráče `level`, `xp`, `xpNext`, `buffs`, `shield`, `offer`, `pendingPicks`;
 klient posílá `{type: "pickBuff", id}`.
+
+## Cheaty (pro testování)
+
+Ve hře napiš za sebou **6767** (číslice nahoře nebo na numerické klávesnici, ne do políčka se jménem) a zapne se **god mode**:
+nic ti neublíží (ani boss Adam) a vedle jména máš ★ a v HUD hlášku. Stejným kódem se vypne. Platí jen pro hráče, který kód napsal.
+O cheatu rozhoduje server (`CHEATS_ENABLED` v `server.js`). Když ho nechceš, spusť server s `CHEATS=0 npm start`.
+Další cheat přidáš do `CHEAT_CODES` v `public/game.js` a do obsluhy zprávy `cheat` v `server.js`.
