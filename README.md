@@ -40,6 +40,13 @@ Tu adresu ostatní otevřou v prohlížeči (funguje i z mobilu, ale ovládá se
 
 Server je „šéf“ – rozhoduje o všem důležitém. Díky tomu všichni vidí to samé a nikdo nemůže podvádět.
 
+## Obtížnost
+
+Hra začíná klidně (2 zelení slizi, nepřátelé se neobjevují blízko hráčů, nový hráč je 3 s nezranitelný)
+a každých 45 s stoupne úroveň (max. 10): přibývají nepřátelé (až 8), jsou rychlejší a vidí hráče z větší dálky,
+od 3. úrovně přibývají Ohniví slizi a od 5. Obří slizi. Když hru všichni opustí, začne se znovu od 1. úrovně.
+Všechna čísla jsou v objektu `DIFFICULTY` nahoře v `server.js`.
+
 ## Soubory
 
 | Soubor | Co dělá |

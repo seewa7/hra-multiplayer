@@ -66,6 +66,22 @@ const COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6", "#e67e22"
 let nextId = 1;
 const players = new Map(); // id -> hráč
 
+// Obtížnost: hra začíná klidně a postupně se zhoršuje, dokud je ve hře aspoň jeden hráč
+const DIFFICULTY = {
+  levelSeconds: 45, // jak často (s) stoupne úroveň
+  maxLevel: 10,
+  startEnemies: 2, // počet nepřátel na začátku
+  maxEnemies: 8, // počet nepřátel na nejvyšší úrovni
+  enemiesPerLevel: 0.7, // o kolik nepřátel víc s každou úrovní
+  speedPerLevel: 0.04, // nepřátelé jsou s každou úrovní o 4 % rychlejší
+  chaseStart: 90, // dosah, ze kterého nepřítel hráče vidí, na 1. úrovni
+  chaseEnd: 160, // totéž na nejvyšší úrovni
+  redFromLevel: 3, // od které úrovně přibývají Ohniví slizi (rychlejší)
+  purpleFromLevel: 5, // od které úrovně přibývají Obří slizi (odolnější)
+  spawnSafeDistance: 120, // nepřítel se neobjeví blíž než tohle k hráči
+  joinProtectionMs: 3000, // nový hráč je chvíli nezranitelný
+};
+
 // Definice nepřátel (základní enemáci - slizouni s různými vlastnostmi)
 const ENEMY_DEFS = [
   { type: "slime_green", name: "Zelený sliz", color: "#2ecc71", eyeColor: "#1b5e20", speed: 45, maxHp: 2, size: 10 },
@@ -75,6 +91,30 @@ const ENEMY_DEFS = [
 
 let nextEnemyId = 1;
 const enemies = [];
+
+// Náhodné místo na mapě dost daleko od hráčů (a od středu, kde se noví hráči objevují)
+function safeSpawnPosition() {
+  const avoid = [{ x: (MAP_W * TILE) / 2, y: (MAP_H * TILE) / 2 }, ...players.values()];
+  let x, y;
+  for (let i = 0; i < 30; i++) {
+    x = Math.random() * (MAP_W * TILE - 60) + 30;
+    y = Math.random() * (MAP_H * TILE - 60) + 30;
+    if (avoid.every((a) => Math.hypot(a.x - x, a.y - y) >= DIFFICULTY.spawnSafeDistance)) break;
+  }
+  return { x, y };
+}
+
+// Který typ slizu přibude na dané úrovni (na začátku jen zelení)
+function enemyDefIndexForLevel(level, n) {
+  const pool = [0]; // zelený
+  if (level >= DIFFICULTY.redFromLevel) pool.push(1);
+  if (level >= DIFFICULTY.purpleFromLevel) pool.push(2);
+  return pool[n % pool.length];
+}
+
+function enemyCountForLevel(level) {
+  return Math.min(DIFFICULTY.maxEnemies, DIFFICULTY.startEnemies + Math.floor((level - 1) * DIFFICULTY.enemiesPerLevel));
+}
 
 function spawnEnemy(defIndex) {
   const def = ENEMY_DEFS[defIndex % ENEMY_DEFS.length];
@@ -88,8 +128,7 @@ function spawnEnemy(defIndex) {
     hp: def.maxHp,
     maxHp: def.maxHp,
     size: def.size,
-    x: Math.random() * (MAP_W * TILE - 60) + 30,
-    y: Math.random() * (MAP_H * TILE - 60) + 30,
+    ...safeSpawnPosition(),
     dir: "down",
     moving: true,
     wanderDir: { x: 0, y: 0 },
@@ -99,9 +138,11 @@ function spawnEnemy(defIndex) {
   };
 }
 
-// Spustíme 6 základních enemáků na mapě
-for (let i = 0; i < 6; i++) {
-  enemies.push(spawnEnemy(i));
+// Na začátku jen pár zelených slizů, další přibývají s úrovní obtížnosti
+let level = 1;
+let difficultyTime = 0; // kolik sekund hry s aspoň jedním hráčem
+for (let i = 0; i < DIFFICULTY.startEnemies; i++) {
+  enemies.push(spawnEnemy(enemyDefIndexForLevel(1, i)));
 }
 
 // ---------- Předměty na mapě (Loot) ----------
@@ -166,7 +207,7 @@ wss.on("connection", (ws) => {
         hp: 3,
         maxHp: 3,
         score: 0,
-        invulnerableUntil: 0,
+        invulnerableUntil: Date.now() + DIFFICULTY.joinProtectionMs, // chvíli po vstupu nezranitelný
         attackUntil: 0,
         lastAttack: 0,
       };
@@ -246,6 +287,23 @@ setInterval(() => {
   const dt = 1 / TICK_RATE;
   const now = Date.now();
 
+  // 3-0) Obtížnost: stoupá, dokud někdo hraje; když hru všichni opustí, začne se znovu
+  if (players.size > 0) {
+    difficultyTime += dt;
+    const newLevel = Math.min(DIFFICULTY.maxLevel, 1 + Math.floor(difficultyTime / DIFFICULTY.levelSeconds));
+    if (newLevel > level) {
+      level = newLevel;
+      console.log(`  Úroveň obtížnosti: ${level}`);
+      for (let n = enemies.length; n < enemyCountForLevel(level); n++) {
+        enemies.push(spawnEnemy(enemyDefIndexForLevel(level, n)));
+      }
+    }
+  } else if (level > 1 || difficultyTime > 0) {
+    level = 1;
+    difficultyTime = 0;
+    enemies.length = DIFFICULTY.startEnemies;
+  }
+
   // 3a) Pohyb hráčů
   for (const p of players.values()) {
     let dx = 0, dy = 0;
@@ -281,8 +339,7 @@ setInterval(() => {
       if (e.respawnTimer <= 0) {
         // Respawn na náhodném místě
         e.hp = e.maxHp;
-        e.x = Math.random() * (MAP_W * TILE - 60) + 30;
-        e.y = Math.random() * (MAP_H * TILE - 60) + 30;
+        Object.assign(e, safeSpawnPosition());
       }
       continue;
     }
@@ -300,7 +357,8 @@ setInterval(() => {
     }
 
     let edx = 0, edy = 0;
-    const CHASE_RADIUS = 160;
+    const t = (level - 1) / (DIFFICULTY.maxLevel - 1); // 0 na 1. úrovni, 1 na nejvyšší
+    const CHASE_RADIUS = DIFFICULTY.chaseStart + (DIFFICULTY.chaseEnd - DIFFICULTY.chaseStart) * t;
 
     if (nearest && minDist < CHASE_RADIUS) {
       // Pronásledování hráče
@@ -323,8 +381,9 @@ setInterval(() => {
       edy = e.wanderDir.y;
     }
 
-    e.x += edx * e.speed * dt;
-    e.y += edy * e.speed * dt;
+    const speed = e.speed * (1 + DIFFICULTY.speedPerLevel * (level - 1));
+    e.x += edx * speed * dt;
+    e.y += edy * speed * dt;
 
     e.x = Math.max(10, Math.min(MAP_W * TILE - 10, e.x));
     e.y = Math.max(10, Math.min(MAP_H * TILE - 10, e.y));
@@ -399,6 +458,7 @@ setInterval(() => {
   // 3d) Pošli všem aktuální stav
   const state = JSON.stringify({
     type: "state",
+    level,
     players: [...players.values()].map(({ input, ...rest }) => ({
       ...rest,
       invulnerable: now < rest.invulnerableUntil,

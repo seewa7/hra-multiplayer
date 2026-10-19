@@ -14,6 +14,7 @@ const hud = document.getElementById("hud");
 let scale = 3; // jak moc zvětšit pixely
 let myId = null;
 let connected = false;
+let difficultyLevel = 1; // úroveň obtížnosti ze serveru
 const players = new Map(); // id -> { ...data ze serveru, rx, ry (pozice pro kreslení) }
 const enemies = new Map(); // id -> { ...data ze serveru, rx, ry }
 const items = new Map(); // id -> { id, type, x, y }
@@ -36,6 +37,8 @@ ws.onmessage = (e) => {
   }
 
   if (msg.type === "state") {
+    if (msg.level) difficultyLevel = msg.level;
+
     // Aktualizace hráčů
     const seenPlayers = new Set();
     for (const p of msg.players) {
@@ -462,7 +465,7 @@ function frame(now) {
 
   // HUD
   if (connected) {
-    let hudText = `Hráči online: ${players.size}  |  Enemáci na mapě: ${enemies.size}\n`;
+    let hudText = `Hráči online: ${players.size}  |  Enemáci na mapě: ${enemies.size}  |  Obtížnost: úroveň ${difficultyLevel}\n`;
     if (me) {
       const hearts = "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
       hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
