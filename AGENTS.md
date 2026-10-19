@@ -52,6 +52,10 @@ je v `README.md`.
   projektu), řekni to uživateli dřív, než ji uděláš.
 - Pull request otevři, ale **nemerguj ho** – to dělá člověk po revizi.
 
+## Nová třída hrdiny
+Přidáváš nebo měníš třídu? **Nejdřív si přečti `CLASSES.md`** – třída musí fungovat se systémem XP, levelů a buffů
+(zranění nepřátel jen přes `hurtEnemy`, cooldowny přes `BUFFS.cooldownMult`, atd.) a PR musí splnit checklist z toho souboru.
+
 ## Pravidla pro kód hry
 - **Server je šéf.** Pozice, body, srážky a další herní stav se počítají jen na
   serveru. Klient posílá pouze vstup (klávesy, akce) a kreslí, co dostane. Nikdy
