@@ -5,6 +5,7 @@
 //
 //  Čas v ms. "frames" = jak dlouho trvá který snímek animace útoku,
 //  "hitFrame" = při kterém snímku se zásah opravdu projeví (počítá server).
+//  "roots" = false: postava se může při animaci pohybovat (základní útoky); jinak stojí.
 // =============================================================
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -46,6 +47,7 @@
         snapshot: {
           slot: "attack",
           label: "Momentka",
+          roots: false, // základní útok postavu nezastavuje, jde dál chodit
           frames: [70, 60, 110], // příprava, záblesk, návrat
           hitFrame: 1,
           cooldown: 450,
