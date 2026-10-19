@@ -145,7 +145,25 @@ function setKey(code, pressed) {
 // Schopnosti třídy: klávesa -> slot (server rozhodne, jestli a co se stane)
 const ABILITY_KEYS = { KeyQ: "q", KeyE: "e" };
 
+// Cheaty pro testování: napsat 6767 (za sebou, mimo políčko se jménem) přepne god mode
+const CHEAT_CODES = { 6767: "god" };
+let cheatBuffer = "";
+
 addEventListener("keydown", (e) => {
+  if (!e.repeat && myId !== null && e.target.tagName !== "INPUT") {
+    const digit = /^(Digit|Numpad)(\d)$/.exec(e.code);
+    if (digit) {
+      cheatBuffer = (cheatBuffer + digit[2]).slice(-4);
+      const cheat = CHEAT_CODES[cheatBuffer];
+      if (cheat) {
+        send({ type: "cheat", id: cheat });
+        cheatBuffer = "";
+      }
+    } else {
+      cheatBuffer = ""; // jiná klávesa řadu přeruší
+    }
+  }
+
   // výběr buffu klávesami 1 / 2 / 3
   const pick = /^(Digit|Numpad)([1-3])$/.exec(e.code);
   const meNow = players.get(myId);
@@ -955,9 +973,10 @@ function frame(now) {
     const sx = (Math.round(p.rx) - camX) * scale;
     const sy = (Math.round(p.ry) - camY - (p.cls === "photographer" ? 24 : 16)) * scale;
     ctx.strokeStyle = "#000";
-    ctx.strokeText(p.name, sx, sy);
+    const label = (p.god ? "★ " : "") + p.name;
+    ctx.strokeText(label, sx, sy);
     ctx.fillStyle = p.id === myId ? "#ffeb3b" : "#fff";
-    ctx.fillText(p.name, sx, sy);
+    ctx.fillText(label, sx, sy);
   }
 
   // Štítky nepřátel
@@ -982,6 +1001,7 @@ function frame(now) {
         ? "💀 mrtvý"
         : "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
       hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
+      if (me.god) hudText += `★ GOD MODE zapnutý (napiš 6767 pro vypnutí)\n`;
       // oživení: sám jen omezeně, v týmu hra končí, až zemřou všichni
       hudText += soloMode
         ? `Oživení: ${Math.max(0, soloRespawns - (me.soloRespawnsUsed || 0))} z ${soloRespawns} (hraješ sám)\n`

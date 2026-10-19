@@ -89,6 +89,9 @@ const DIFFICULTY = {
   joinProtectionMs: 3000, // nový hráč je chvíli nezranitelný
 };
 
+// Cheaty pro testování (např. bosse). Vypnout jde spuštěním serveru s CHEATS=0:  CHEATS=0 npm start
+const CHEATS_ENABLED = process.env.CHEATS !== "0";
+
 // Smrt a konec hry
 const DEATH = {
   respawnMs: 30000, // jak dlouho je mrtvý hráč mimo hru, než se oživí
@@ -284,6 +287,7 @@ function applyBuff(p, id) {
 // Vrací true, když hráč opravdu dostal zásah (ne když je nezranitelný).
 function hurtPlayer(p, dmg, now, from, opts = {}) {
   if (p.hp <= 0 || now < p.invulnerableUntil) return false;
+  if (p.god) return false; // cheat: god mode (nezraní ho nic, ani boss)
   if (p.shield > 0) {
     p.shield--; // štít zásah zablokuje
     p.shieldAt = now + BUFFS.SHIELD_RECHARGE_MS;
@@ -849,6 +853,7 @@ wss.on("connection", (ws) => {
         regenAt: 0, // kdy přibude další život z Regenerace
         pendingPicks: 0, // kolik výběrů buffu na hráče čeká
         offer: null, // aktuální nabídka 3 buffů (nebo null)
+        god: false, // cheat: nesmrtelnost (přepíná se kódem 6767)
         slowUntil: 0, // zpomalení od bosse
         slowFactor: 1,
         respawnAt: 0, // kdy se mrtvý hráč oživí (Infinity = nikdy, hra končí)
@@ -890,6 +895,12 @@ wss.on("connection", (ws) => {
           if (dist <= atk.range + (e.size || 10) / 2) hurtEnemy(e, atk.damage, player, now, atk.knockback);
         }
       }
+    }
+
+    // Cheaty (testování): klient pošle kód, server přepne režim jen tomuhle hráči
+    if (msg.type === "cheat" && player && CHEATS_ENABLED && msg.id === "god") {
+      player.god = !player.god;
+      console.log(`  ★ ${player.name}: god mode ${player.god ? "ZAPNUT" : "vypnut"}`);
     }
 
     // Hráč si vybral buff z nabídky po postupu na další level
