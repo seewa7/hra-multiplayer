@@ -33,6 +33,32 @@
     #classes .card small { font-weight: normal; opacity: .6; font-size: 11px; line-height: 1.2; min-height: 26px; }
     #classes input:checked + .card { border-color: #2ecc71; background: #26402f; box-shadow: 0 0 0 2px #2ecc71 inset; }
     #classes input:focus-visible + .card { outline: 2px solid #fff; }
+    #deathBanner {
+      position: fixed; left: 50%; top: 30%; transform: translateX(-50%); display: none;
+      flex-direction: column; align-items: center; gap: 6px; text-align: center;
+      background: rgba(20, 0, 0, 0.8); border: 4px solid #000; box-shadow: 6px 6px 0 #000;
+      padding: 12px 24px; color: #fff; pointer-events: none; max-width: 92vw;
+    }
+    #deathBanner.show { display: flex; }
+    #deathBanner .t { font-size: 28px; font-weight: bold; color: #ff5a5a; letter-spacing: 2px; }
+    #deathBanner .s { font-size: 16px; }
+    #deathBanner .h { font-size: 12px; opacity: .7; }
+    #gameOver {
+      position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: rgba(10, 0, 0, 0.78); color: #fff; z-index: 5;
+    }
+    #gameOver.show { display: flex; }
+    #gameOver .box {
+      background: #2a2a40; border: 4px solid #000; box-shadow: 6px 6px 0 #000;
+      padding: 20px 28px; text-align: center; min-width: min(380px, 90vw);
+    }
+    #gameOver h1 { margin: 0 0 6px; font-size: 40px; color: #ff5a5a; letter-spacing: 3px; }
+    #goInfo { font-size: 15px; opacity: .85; margin-bottom: 12px; }
+    #goTable { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 15px; }
+    #goTable td, #goTable th { padding: 4px 8px; text-align: left; border-bottom: 2px solid #000; }
+    #goTable th { color: #ffe14d; font-size: 12px; }
+    #goTable td:nth-child(n+3), #goTable th:nth-child(n+3) { text-align: right; }
+    #goNext { font-size: 16px; color: #2ecc71; font-weight: bold; }
     #xpBar {
       position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%);
       display: none; align-items: center; gap: 8px; width: min(560px, 92vw);
@@ -87,6 +113,21 @@
 <body>
   <canvas id="game"></canvas>
   <div id="hud"></div>
+
+  <div id="deathBanner">
+    <div class="t">ZEMŘEL JSI</div>
+    <div class="s" id="deathSub"></div>
+    <div class="h" id="deathHint"></div>
+  </div>
+
+  <div id="gameOver">
+    <div class="box">
+      <h1>GAME OVER</h1>
+      <div id="goInfo"></div>
+      <table id="goTable"></table>
+      <div id="goNext"></div>
+    </div>
+  </div>
 
   <div id="xpBar">
     <div id="xpLvl">LVL 1</div>

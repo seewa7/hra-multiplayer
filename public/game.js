@@ -15,6 +15,9 @@ let scale = 3; // jak moc zvětšit pixely
 let myId = null;
 let connected = false;
 let difficultyLevel = 1; // úroveň obtížnosti ze serveru
+let soloMode = false; // hraju sám (omezený počet oživení)
+let soloRespawns = 1; // kolik oživení má hráč, který hraje sám
+let gameOver = null; // po konci hry { remainingMs, survivedMs, results }
 const players = new Map(); // id -> { ...data ze serveru, rx, ry (pozice pro kreslení) }
 const enemies = new Map(); // id -> { ...data ze serveru, rx, ry }
 const items = new Map(); // id -> { id, type, x, y }
@@ -38,6 +41,9 @@ ws.onmessage = (e) => {
 
   if (msg.type === "state") {
     if (msg.level) difficultyLevel = msg.level;
+    soloMode = !!msg.solo;
+    soloRespawns = msg.soloRespawns || 1;
+    gameOver = msg.gameOver || null;
 
     // Aktualizace hráčů
     const seenPlayers = new Set();
@@ -482,6 +488,65 @@ function updateBuffPicker(me) {
   buffPicker.classList.add("show");
 }
 
+// ---------- Smrt a konec hry ----------
+const deathBanner = document.getElementById("deathBanner");
+const deathSub = document.getElementById("deathSub");
+const deathHint = document.getElementById("deathHint");
+const gameOverBox = document.getElementById("gameOver");
+const goInfo = document.getElementById("goInfo");
+const goTable = document.getElementById("goTable");
+const goNext = document.getElementById("goNext");
+let shownResults = ""; // aby se tabulka nepřekreslovala každý snímek
+
+function formatTime(ms) {
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function updateDeathUi(me) {
+  // konec hry
+  if (gameOver) {
+    deathBanner.classList.remove("show");
+    gameOverBox.classList.add("show");
+    goNext.textContent = `Nová hra za ${Math.ceil(gameOver.remainingMs / 1000)} s…`;
+    const key = JSON.stringify(gameOver.results) + gameOver.survivedMs;
+    if (key !== shownResults) {
+      shownResults = key;
+      goInfo.textContent = `Přežili jste ${formatTime(gameOver.survivedMs)}`;
+      goTable.textContent = "";
+      const head = goTable.insertRow();
+      for (const h of ["#", "Hráč", "Level", "Body"]) {
+        const th = document.createElement("th");
+        th.textContent = h;
+        head.appendChild(th);
+      }
+      gameOver.results.forEach((r, i) => {
+        const row = goTable.insertRow();
+        for (const text of [i + 1, r.name, r.level, r.score]) row.insertCell().textContent = text;
+      });
+    }
+    return;
+  }
+  gameOverBox.classList.remove("show");
+  shownResults = "";
+
+  // jsem mrtvý a čekám na oživení
+  if (me && me.dead) {
+    deathBanner.classList.add("show");
+    if (me.respawnIn == null) {
+      deathSub.textContent = "Už se neoživíš";
+      deathHint.textContent = "Hra skončila";
+    } else {
+      deathSub.textContent = `Oživení za ${Math.ceil(me.respawnIn / 1000)} s`;
+      deathHint.textContent = soloMode
+        ? "Hraješ sám – tohle bylo tvoje jediné oživení, další smrt znamená konec hry"
+        : "Hra skončí, jen když zemřete všichni naráz – drž spoluhráče naživu";
+    }
+  } else {
+    deathBanner.classList.remove("show");
+  }
+}
+
 // ---------- Lišta XP dole na obrazovce ----------
 const xpBar = document.getElementById("xpBar");
 const xpFill = document.getElementById("xpFill");
@@ -542,9 +607,11 @@ function frame(now) {
 
   // kamera sleduje mě
   const me = players.get(myId);
+  // mrtvý hráč sleduje živého spoluhráče (když žádný není, zůstane kamera na něm)
+  const camTarget = me && me.dead ? [...players.values()].find((p) => !p.dead) || me : me;
   const viewW = canvas.width / scale, viewH = canvas.height / scale;
-  const camX = Math.round((me ? me.rx : (MAP_W * TILE) / 2) - viewW / 2);
-  const camY = Math.round((me ? me.ry : (MAP_H * TILE) / 2) - viewH / 2);
+  const camX = Math.round((camTarget ? camTarget.rx : (MAP_W * TILE) / 2) - viewW / 2);
+  const camY = Math.round((camTarget ? camTarget.ry : (MAP_H * TILE) / 2) - viewH / 2);
 
   // pozadí = voda
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -561,7 +628,7 @@ function frame(now) {
 
   // Vykreslení entit – seřazení podle y (depth sorting)
   const renderables = [
-    ...[...players.values()].map((p) => ({ type: "player", obj: p, y: p.ry })),
+    ...[...players.values()].filter((p) => !p.dead).map((p) => ({ type: "player", obj: p, y: p.ry })),
     ...[...enemies.values()].map((e) => ({ type: "enemy", obj: e, y: e.ry })),
     ...[...items.values()].map((it) => ({ type: "item", obj: it, y: it.y })),
   ].sort((a, b) => a.y - b.y);
@@ -669,6 +736,7 @@ function frame(now) {
   ctx.textAlign = "center";
   ctx.lineWidth = 3;
   for (const p of players.values()) {
+    if (p.dead) continue;
     const sx = (Math.round(p.rx) - camX) * scale;
     const sy = (Math.round(p.ry) - camY - (p.cls === "photographer" ? 24 : 16)) * scale;
     ctx.strokeStyle = "#000";
@@ -692,8 +760,14 @@ function frame(now) {
   if (connected) {
     let hudText = `Hráči online: ${players.size}  |  Enemáci na mapě: ${enemies.size}  |  Obtížnost: úroveň ${difficultyLevel}\n`;
     if (me) {
-      const hearts = "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
+      const hearts = me.dead
+        ? "💀 mrtvý"
+        : "❤️".repeat(Math.max(0, me.hp || 0)) + "🖤".repeat(Math.max(0, (me.maxHp || 3) - (me.hp || 0)));
       hudText += `Životy: ${hearts}  |  Skóre: ${me.score || 0} ⚔️\n`;
+      // oživení: sám jen omezeně, v týmu hra končí, až zemřou všichni
+      hudText += soloMode
+        ? `Oživení: ${Math.max(0, soloRespawns - (me.soloRespawnsUsed || 0))} z ${soloRespawns} (hraješ sám)\n`
+        : `Tým: hra končí, až zemřete všichni naráz\n`;
       const owned = BUFFS.LIST.filter((b) => me.buffs && me.buffs[b.id]).map((b) => `${b.icon}×${me.buffs[b.id]}`);
       if (me.buffs && me.buffs.shield) owned.push(`(štít ${me.shield}/${me.buffs.shield})`);
       if (owned.length) hudText += `Buffy: ${owned.join("  ")}\n`;
@@ -710,13 +784,18 @@ function frame(now) {
     hudText += `Žebříček:\n`;
     hudText += [...players.values()]
       .sort((a, b) => (b.score || 0) - (a.score || 0))
-      .map((p) => `• ${p.name} (LVL ${p.level || 1}): ${p.score || 0} bodů (${p.hp || 0}/${p.maxHp || 3} HP)`)
+      .map((p) =>
+        p.dead
+          ? `• ${p.name} (LVL ${p.level || 1}): ${p.score || 0} bodů 💀 ${p.respawnIn == null ? "konec" : "oživení za " + Math.ceil(p.respawnIn / 1000) + " s"}`
+          : `• ${p.name} (LVL ${p.level || 1}): ${p.score || 0} bodů (${p.hp || 0}/${p.maxHp || 3} HP)`
+      )
       .join("\n");
     hud.textContent = hudText;
   }
 
   updateBuffPicker(me);
   updateXpBar(me);
+  updateDeathUi(me);
 
   requestAnimationFrame(frame);
 }
