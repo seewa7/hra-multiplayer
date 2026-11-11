@@ -691,12 +691,18 @@ function markEnemy(e, now) {
 const FACING = { down: [0, 1], up: [0, -1], left: [-1, 0], right: [1, 0] };
 const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 
+// Která schopnost třídy patří na danou klávesu ("attack" = Mezerník / klik, "q", "e")
+function abilityForSlot(cls, slot) {
+  const abilities = (CLASSES[cls] && CLASSES[cls].abilities) || {};
+  return Object.keys(abilities).find((n) => abilities[n].slot === slot);
+}
+
 // Spustí schopnost (animaci). Zásah se projeví až ve správném snímku – viz resolveAction.
 function startAbility(p, name, now) {
   const ab = CLASSES[p.cls] && CLASSES[p.cls].abilities[name];
   if (!ab || p.hp <= 0) return;
   if (p.action && now < p.action.endAt) return; // předchozí animace ještě běží
-  if (now < p.cooldowns[name]) return; // cooldown
+  if (now < (p.cooldowns[name] || 0)) return; // cooldown
 
   p.cooldowns[name] = now + ab.cooldown * BUFFS.cooldownMult(p.buffs); // buff Rychlejší útoky
   p.action = {
@@ -724,26 +730,24 @@ function resolveAction(p, now) {
     const dist = Math.hypot(vx, vy);
     const reach = (e.size || 10) / 2;
 
-    if (a.name === "snapshot" || a.name === "strong_flash") {
-      // kužel před postavou: dosah + úhel (minDot -1 = dokola, 360°)
-      if (dist > ab.range + reach) continue;
-      if (dist > 6 && (vx * fx + vy * fy) / dist < ab.minDot) continue;
-    } else if (a.name === "perfect_shot") {
+    if (ab.shape === "beam") {
       // dlouhý úzký paprsek ve směru postavy
       const along = vx * fx + vy * fy;
       const across = Math.abs(vx * fy - vy * fx);
       if (along < -reach || along > ab.length + reach || across > ab.halfWidth + reach) continue;
+    } else {
+      // kužel před postavou: dosah + úhel (minDot -1 = dokola, 360°)
+      if (dist > ab.range + reach) continue;
+      if (dist > 6 && (vx * fx + vy * fy) / dist < ab.minDot) continue;
     }
 
     hurtEnemy(e, ab.damage, p, now, false);
-    if (a.name === "strong_flash") {
-      if (!e.adam) { // boss je proti omráčení a zpomalení odolný
-        e.stunUntil = Math.max(e.stunUntil, now + ab.stunMs);
-        e.slowUntil = Math.max(e.slowUntil, now + ab.stunMs + ab.slowMs);
-      }
-    } else {
-      markEnemy(e, now); // Momentka i Perfektní záběr označují zasažené
+    if (ab.stunMs && !e.adam) { // boss je proti omráčení a zpomalení odolný
+      e.stunUntil = Math.max(e.stunUntil, now + ab.stunMs);
+      e.slowUntil = Math.max(e.slowUntil, now + ab.stunMs + (ab.slowMs || 0));
+      e.slowFactor = ab.slowFactor ?? 0.5;
     }
+    if (ab.marks) markEnemy(e, now);
   }
 }
 
@@ -822,7 +826,7 @@ function resetRun(now) {
       attackUntil: 0,
       lastAttack: 0,
       action: null,
-      cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
+      cooldowns: {},
       respawnAt: 0,
       soloRespawnsUsed: 0,
       slippedUntil: 0,
@@ -859,7 +863,7 @@ wss.on("connection", (ws) => {
     // Hráč se připojuje se jménem
     if (msg.type === "join" && !player) {
       const name = String(msg.name || "Hráč").trim().slice(0, 16) || "Hráč";
-      const cls = msg.cls === "photographer" ? "photographer" : "hero"; // klient nesmí poslat nic jiného
+      const cls = CLASSES.ids.includes(msg.cls) ? msg.cls : "hero"; // klient nesmí poslat nic jiného
       player = {
         id,
         name,
@@ -891,7 +895,7 @@ wss.on("connection", (ws) => {
         soloRespawnsUsed: 0, // kolik oživení už využil, když hrál sám
         action: null, // běžící schopnost třídy (Fotograf)
         actionSeq: 0,
-        cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
+        cooldowns: {}, // schopnost -> kdy půjde znovu použít
         slippedUntil: 0,
         steppedPebbles: new Set(),
       };
@@ -914,14 +918,15 @@ wss.on("connection", (ws) => {
     // Hráč zaútočil (klávesa Space nebo klik myší)
     if (msg.type === "attack" && player && player.hp > 0) {
       const now = Date.now();
-      if (player.cls === "photographer") {
-        startAbility(player, "snapshot", now); // základní útok Fotografa
-      } else if (now - player.lastAttack > CLASSES.hero.attack.cooldown * BUFFS.cooldownMult(player.buffs)) {
+      const basic = abilityForSlot(player.cls, "attack");
+      if (basic) {
+        startAbility(player, basic, now); // základní útok třídy jako schopnost (animace, zásah ve snímku)
+      } else if (CLASSES[player.cls].attack && now - player.lastAttack > CLASSES[player.cls].attack.cooldown * BUFFS.cooldownMult(player.buffs)) {
         player.lastAttack = now;
         player.attackUntil = now + 180;
 
         // Základní útok zasáhne všechny nepřátele v kruhu kolem hráče (360°), směr nehraje roli
-        const atk = CLASSES.hero.attack;
+        const atk = CLASSES[player.cls].attack;
         for (const e of enemies) {
           if (e.hp <= 0) continue;
           const dist = Math.hypot(e.x - player.x, e.y - player.y);
@@ -952,10 +957,9 @@ wss.on("connection", (ws) => {
       nextOffer(player);
     }
 
-    // Schopnost třídy na klávesách Q / E (zatím jen Fotograf)
-    if (msg.type === "ability" && player && player.hp > 0 && player.cls === "photographer") {
-      const abilities = CLASSES.photographer.abilities;
-      const name = Object.keys(abilities).find((n) => abilities[n].slot === msg.slot && msg.slot !== "attack");
+    // Schopnost třídy na klávesách Q / E
+    if (msg.type === "ability" && player && player.hp > 0 && (msg.slot === "q" || msg.slot === "e")) {
+      const name = abilityForSlot(player.cls, msg.slot);
       if (name) startAbility(player, name, Date.now());
     }
   });
@@ -1003,12 +1007,8 @@ function broadcastState(now) {
         animElapsed: busy ? now - action.start : 0,
         animDir: busy ? action.dir : rest.dir,
         // zbývající cooldowny v ms (pro HUD)
-        cd: rest.cls === "photographer"
-          ? {
-              snapshot: Math.max(0, cooldowns.snapshot - now),
-              strong_flash: Math.max(0, cooldowns.strong_flash - now),
-              perfect_shot: Math.max(0, cooldowns.perfect_shot - now),
-            }
+        cd: Object.keys(CLASSES[rest.cls].abilities).length
+          ? Object.fromEntries(Object.keys(CLASSES[rest.cls].abilities).map((n) => [n, Math.max(0, (cooldowns[n] || 0) - now)]))
           : undefined,
       };
     }),
@@ -1241,7 +1241,7 @@ setInterval(() => {
     const speed =
       e.speed *
       speedMultForLevel(level) * // rychlejší s úrovní obtížnosti
-      (now < e.slowUntil ? CLASSES.photographer.abilities.strong_flash.slowFactor : 1); // zpomalení od Fotografa
+      (now < e.slowUntil ? e.slowFactor ?? 0.5 : 1); // zpomalení (např. Silný blesk Fotografa)
 
     if (stunned) {
       // omráčený (oslepený) nepřítel stojí

@@ -276,41 +276,53 @@ function getSprite(color, dir, legs) {
   return c;
 }
 
-// ---------- Fotograf (spritesheety) ----------
-// Atlasy vyrábí tools/build_photographer_atlas.py (kotva = střed chodidel je ve všech
-// snímcích na stejném místě, takže postava při změně animace neposkočí).
-const PHOTO_SCALE = 0.09; // kolik pixelů mapy odpovídá jednomu pixelu obrázku (jen měřítko)
+// ---------- Sprity tříd (spritesheety) ----------
+// Třída s obrázky má atlas v public/assets/<id třídy>/atlas.json (vyrábí ho nástroj v tools/):
+//   sheets: { walk: {...}, <název schopnosti>: {...} }, řádky = směry (dolů, vlevo, vpravo, nahoru),
+//   cellW / cellH, anchorX / anchorY (střed chodidel, stejný ve všech snímcích => postava neposkakuje),
+//   volitelně counts (kolik snímků má který řádek) a scale (měřítko jen pro tenhle sheet).
+// Jak velká je postava ve hře a kde má jméno / kruh štítu, je v CLASS_VIEW.
 const WALK_FRAME_MS = 100;
 const DIR_ROW = { down: 0, left: 1, right: 2, up: 3 };
-const photo = { ready: false, sheets: {} };
+const CLASS_VIEW = {
+  hero: { labelY: 16, ringY: 7, ringR: 11 }, // kreslená postavička (getSprite), bez obrázků
+  photographer: { sprites: true, scale: 0.09, labelY: 24, ringY: 9, ringR: 13 },
+  dragon: { sprites: true, scale: 0.12, labelY: 25, ringY: 10, ringR: 13 }, // měřítko je přímo v atlasu u sheetů
+};
+const viewOf = (cls) => CLASS_VIEW[cls] || CLASS_VIEW.hero;
+const classSprites = {}; // id třídy -> { ready, sheets }
 
-fetch("assets/photographer/atlas.json")
-  .then((r) => r.json())
-  .then((atlas) =>
-    Promise.all(
-      Object.entries(atlas.sheets).map(
-        ([name, sh]) =>
-          new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload = () => {
-              photo.sheets[name] = { ...sh, img };
-              resolve();
-            };
-            img.onerror = reject;
-            img.src = "assets/photographer/" + sh.file;
-          })
+for (const [cls, view] of Object.entries(CLASS_VIEW)) {
+  if (!view.sprites) continue;
+  const cs = (classSprites[cls] = { ready: false, sheets: {} });
+  fetch(`assets/${cls}/atlas.json`)
+    .then((r) => r.json())
+    .then((atlas) =>
+      Promise.all(
+        Object.entries(atlas.sheets).map(
+          ([name, sh]) =>
+            new Promise((resolve, reject) => {
+              const img = new Image();
+              img.onload = () => {
+                cs.sheets[name] = { ...sh, img };
+                resolve();
+              };
+              img.onerror = reject;
+              img.src = `assets/${cls}/` + sh.file;
+            })
+        )
       )
     )
-  )
-  .then(() => {
-    photo.ready = true;
-    drawThumb("thumb-photographer", () => photoFrame("walk", 0, "down"));
-  })
-  .catch((err) => console.warn("Sprity Fotografa se nenačetly, kreslí se základní postava:", err));
+    .then(() => {
+      cs.ready = true;
+      drawThumb(`thumb-${cls}`, () => spriteFrame(cls, "walk", 0, "down"));
+    })
+    .catch((err) => console.warn(`Sprity třídy ${cls} se nenačetly, kreslí se základní postava:`, err));
+}
 
-// Vrací { img, sx, sy, sw, sh, ax, ay } pro daný snímek
-function photoFrame(sheetName, frame, dir) {
-  const sh = photo.sheets[sheetName];
+// Vrací { img, sx, sy, sw, sh, ax, ay, scale } pro daný snímek
+function spriteFrame(cls, sheetName, frame, dir) {
+  const sh = classSprites[cls].sheets[sheetName];
   return {
     img: sh.img,
     sx: frame * sh.cellW,
@@ -319,31 +331,34 @@ function photoFrame(sheetName, frame, dir) {
     sh: sh.cellH,
     ax: sh.anchorX,
     ay: sh.anchorY,
+    scale: sh.scale ?? viewOf(cls).scale,
   };
 }
 
 // Který snímek se má teď ukázat (stav -> sheet + číslo snímku)
-function photographerFrame(p, now) {
+function classFrame(p, now) {
   const dir = p.animDir || p.dir;
-  if (p.anim === "idle") return photoFrame("walk", 0, dir);
-  if (p.anim === "walk") return photoFrame("walk", Math.floor(now / WALK_FRAME_MS) % 6, dir);
+  const walk = classSprites[p.cls].sheets.walk;
+  const count = walk.counts ? walk.counts[DIR_ROW[dir]] : walk.cols;
+  if (p.anim === "idle") return spriteFrame(p.cls, "walk", 0, dir);
+  if (p.anim === "walk") return spriteFrame(p.cls, "walk", Math.floor(now / WALK_FRAME_MS) % count, dir);
 
   // útok: snímek podle času od začátku akce (časování je ve shared/classes.js)
-  const timing = CLASSES.photographer.abilities[p.anim].frames;
+  const timing = CLASSES[p.cls].abilities[p.anim].frames;
   let t = now - p.animT0;
   let frame = timing.length - 1;
   for (let i = 0; i < timing.length; i++) {
     if (t < timing[i]) { frame = i; break; }
     t -= timing[i];
   }
-  return photoFrame(p.anim, frame, dir);
+  return spriteFrame(p.cls, p.anim, frame, dir);
 }
 
-// Momentka zasahuje dokola (360°), ale záblesk ve spritu je jen ve směru pohledu –
-// proto se ve chvíli zásahu kolem Fotografa na okamžik ukáže kruh dosahu.
-function drawSnapshotRing(ctx, p, x, y, now) {
-  if (p.anim !== "snapshot") return;
-  const ab = CLASSES.photographer.abilities.snapshot;
+// Schopnost, která zasahuje dokola (360°), má ve spritu efekt jen ve směru pohledu –
+// proto se ve chvíli zásahu kolem postavy na okamžik ukáže kruh dosahu.
+function drawAttackRing(ctx, p, x, y, now) {
+  const ab = p.anim && CLASSES[p.cls].abilities[p.anim];
+  if (!ab || ab.minDot !== -1) return;
   const total = ab.frames.reduce((a, b) => a + b, 0);
   const hitAt = ab.frames.slice(0, ab.hitFrame).reduce((a, b) => a + b, 0);
   const t = now - p.animT0;
@@ -352,12 +367,12 @@ function drawSnapshotRing(ctx, p, x, y, now) {
   drawAttackSlash(ctx, x, y - 4, ab.range - 4, Math.max(0, fade));
 }
 
-function drawPhotographer(ctx, p, x, y, now) {
-  const f = photographerFrame(p, now);
+function drawClassSprite(ctx, p, x, y, now) {
+  const f = classFrame(p, now);
   ctx.drawImage(
     f.img, f.sx, f.sy, f.sw, f.sh,
-    Math.round(x - f.ax * PHOTO_SCALE), Math.round(y - f.ay * PHOTO_SCALE),
-    f.sw * PHOTO_SCALE, f.sh * PHOTO_SCALE
+    Math.round(x - f.ax * f.scale), Math.round(y - f.ay * f.scale),
+    f.sw * f.scale, f.sh * f.scale
   );
 }
 
@@ -939,9 +954,9 @@ function frame(now) {
         ctx.rotate(Math.sin(now / 40) * 0.25);
         ctx.translate(-x, -y);
       }
-      if (p.cls === "photographer" && photo.ready) {
-        drawPhotographer(ctx, p, x, y, now);
-        drawSnapshotRing(ctx, p, x, y, now);
+      if (classSprites[p.cls] && classSprites[p.cls].ready) {
+        drawClassSprite(ctx, p, x, y, now);
+        drawAttackRing(ctx, p, x, y, now);
       } else {
         ctx.drawImage(getSprite(p.color, p.dir, p.moving ? walk : 0), x - 5, y - 14);
       }
@@ -955,12 +970,12 @@ function frame(now) {
         ctx.strokeStyle = "rgba(120, 205, 255, 0.85)";
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.ellipse(x, y - (p.cls === "photographer" ? 9 : 7), 10, p.cls === "photographer" ? 13 : 11, 0, 0, Math.PI * 2);
+        ctx.ellipse(x, y - viewOf(p.cls).ringY, 10, viewOf(p.cls).ringR, 0, 0, Math.PI * 2);
         ctx.stroke();
       }
 
       // vizuální efekt útoku
-      if (p.attacking && p.cls !== "photographer") {
+      if (p.attacking) { // základní úder bez animace (Hrdina)
         drawAttackSlash(ctx, x, y);
       }
     } else if (item.type === "enemy") {
@@ -1035,7 +1050,7 @@ function frame(now) {
   for (const p of players.values()) {
     if (p.dead) continue;
     const sx = (Math.round(p.rx) - camX) * scale;
-    const sy = (Math.round(p.ry) - camY - (p.cls === "photographer" ? 24 : 16)) * scale;
+    const sy = (Math.round(p.ry) - camY - viewOf(p.cls).labelY) * scale;
     ctx.strokeStyle = "#000";
     const label = (p.god ? "★ " : "") + p.name;
     ctx.strokeText(label, sx, sy);
@@ -1083,15 +1098,16 @@ function frame(now) {
       const owned = BUFFS.LIST.filter((b) => me.buffs && me.buffs[b.id]).map((b) => `${b.icon}×${me.buffs[b.id]}`);
       if (me.buffs && me.buffs.shield) owned.push(`(štít ${me.shield}/${me.buffs.shield})`);
       if (owned.length) hudText += `Buffy: ${owned.join("  ")}\n`;
-      if (me.cls === "photographer") {
-        const ab = CLASSES.photographer.abilities;
-        const cd = (name) => (me.cd && me.cd[name] > 0 ? (me.cd[name] / 1000).toFixed(1) + " s" : "připraveno");
-        hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] ${ab.snapshot.label}\n`;
-        hudText += `[Q] ${ab.strong_flash.label}: ${cd("strong_flash")}   [E] ${ab.perfect_shot.label}: ${cd("perfect_shot")}\n`;
-        hudText += `🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)  🪨 Kamínky (10% na uklouznutí)\n\n`;
-      } else {
-        hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok  |  🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)  🪨 Kamínky (10% na uklouznutí)\n\n`;
-      }
+      // ovládání a cooldowny podle třídy (definice v shared/classes.js)
+      const abilities = CLASSES[me.cls].abilities;
+      const names = Object.keys(abilities);
+      const basic = names.find((n) => abilities[n].slot === "attack");
+      const cd = (name) => (me.cd && me.cd[name] > 0 ? (me.cd[name] / 1000).toFixed(1) + " s" : "připraveno");
+      const basicLabel = basic ? abilities[basic].label : (CLASSES[me.cls].attack && CLASSES[me.cls].attack.label) || "Útok";
+      hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] ${basicLabel}\n`;
+      const extra = names.filter((n) => abilities[n].slot !== "attack").map((n) => `[${abilities[n].slot.toUpperCase()}] ${abilities[n].label}: ${cd(n)}`);
+      if (extra.length) hudText += extra.join("   ") + "\n";
+      hudText += `🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)  🪨 Kamínky (10% na uklouznutí)\n\n`;
     }
     hudText += `Žebříček:\n`;
     hudText += [...players.values()]
