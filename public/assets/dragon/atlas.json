@@ -1,0 +1,40 @@
+{
+  "sheets": {
+    "walk": {
+      "file": "walk.png",
+      "cols": 6,
+      "rows": 4,
+      "cellW": 194,
+      "cellH": 205,
+      "anchorX": 97,
+      "anchorY": 197,
+      "scale": 0.1183,
+      "counts": [
+        2,
+        6,
+        6,
+        2
+      ]
+    },
+    "claw": {
+      "file": "claw.png",
+      "cols": 4,
+      "rows": 4,
+      "cellW": 188,
+      "cellH": 190,
+      "anchorX": 94,
+      "anchorY": 158,
+      "scale": 0.202
+    },
+    "fire_breath": {
+      "file": "fire_breath.png",
+      "cols": 3,
+      "rows": 4,
+      "cellW": 260,
+      "cellH": 282,
+      "anchorX": 130,
+      "anchorY": 206,
+      "scale": 0.202
+    }
+  }
+}

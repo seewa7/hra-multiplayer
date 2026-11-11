@@ -42,12 +42,13 @@ Server je „šéf“ – rozhoduje o všem důležitém. Díky tomu všichni vi
 
 ## Třídy hrdinů
 
-Při vstupu do hry si hráč vybere třídu. Zatím jsou dvě:
+Při vstupu do hry si hráč vybere třídu. Zatím jsou tři:
 
 | Třída | Ovládání |
 |---|---|
 | **Hrdina** | Mezerník / klik: úder mečem, zasáhne všechny kolem dokola (360°) |
 | **Fotograf** | Mezerník / klik: **Momentka** (zasáhne dokola 360°, označí cíl na 3 s, označený dostává o 15 % víc poškození) · **Q**: **Silný blesk** (omráčí a zpomalí, cooldown 7 s) · **E**: **Perfektní záběr** (dlouhý paprsek, zasáhne všechny v řadě a označí je, cooldown 14 s) |
+| **Drak** | Mezerník / klik: **Drápy** (zasáhnou dokola 360°, postava jde dál) · **Q**: **Ohnivý dech** (kužel ohně před drakem, 2 poškození, cooldown 6 s) |
 
 Časování animací, cooldowny, dosahy a poškození všech tříd jsou v `public/shared/classes.js`.
 Klient jen pošle záměr (`attack` / `ability`), o zásahu, poškození a cooldownu rozhoduje server.
@@ -56,7 +57,10 @@ Klient jen pošle záměr (`attack` / `ability`), o zásahu, poškození a coold
 
 **Sprity Fotografa:** zdroje jsou v `assets-src/photographer/`, hotové atlasy v `public/assets/photographer/`.
 Znovu se vyrobí příkazem `python3 tools/build_photographer_atlas.py` (potřebuje `pip3 install pillow numpy scipy`).
-Velikost postavy ve hře se mění konstantou `PHOTO_SCALE` v `public/game.js`.
+Velikost postavy ve hře se mění v `CLASS_VIEW` v `public/game.js`.
+
+**Sprity Draka:** zdroje (JPEG s bílým pozadím) jsou v `assets-src/dragon/`, atlasy v `public/assets/dragon/` – vyrábí je
+`python3 tools/build_dragon_atlas.py` (odstraní bílé pozadí, vybere snímky a zarovná je podle chodidel).
 
 ## Boss Adam
 
