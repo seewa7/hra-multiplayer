@@ -107,6 +107,13 @@ Všechna čísla jsou v objektu `DIFFICULTY` nahoře v `server.js`.
 - **Nový herní objekt** (mince, nepřátelé): ulož ho na serveru, posílej ve zprávě `state` a v `game.js` ho nakresli ve funkci `frame`.
 - **Velikost mapy**: `MAP_W` / `MAP_H` – musí být stejné v `server.js` i `game.js`.
 
+## Kamínky
+
+Na mapě je **16 kamínků** (pevně dané pozice v `PEBBLES` nahoře v `server.js`, mimo střed mapy, kde se hráči objevují).
+Když přes kamínek přejdeš, je **10% šance, že uklouzneš** a ztratíš 1 srdce (lehké odhození, postava se zakymácí
+a nad hlavou se ukáže „Uklouzl! -1 ❤️“). Na jeden přechod přes kamínek se hází jen jednou. Štít, nezranitelnost
+i god mode uklouznutí zablokují. Server posílá kamínky jen jednou při připojení (ve zprávě `welcome`).
+
 ## Smrt, oživení a konec hry
 
 Když ztratíš všechny životy, na **30 s** vypadneš ze hry (kamera sleduje živého spoluhráče) a pak se oživíš ve středu mapy
