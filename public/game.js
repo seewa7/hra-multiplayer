@@ -285,6 +285,7 @@ const DIR_ROW = { down: 0, left: 1, right: 2, up: 3 };
 const CLASS_VIEW = {
   hero: { labelY: 16, ringY: 7, ringR: 11 }, // kreslená postavička (getSprite), bez obrázků
   photographer: { sprites: true, scale: 0.09, labelY: 24, ringY: 9, ringR: 13 },
+  dragon: { sprites: true, scale: 0.12, labelY: 25, ringY: 10, ringR: 13 }, // měřítko je přímo v atlasu u sheetů
 };
 const viewOf = (cls) => CLASS_VIEW[cls] || CLASS_VIEW.hero;
 const classSprites = {}; // id třídy -> { ready, sheets }

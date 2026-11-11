@@ -92,6 +92,39 @@
         },
       },
     },
+
+    dragon: {
+      id: "dragon",
+      name: "Drak",
+      description: "Drápy dokola, ohnivý dech před sebe",
+      abilities: {
+        // Drápy – základní útok dokola (360°), postava jde dál
+        claw: {
+          slot: "attack",
+          label: "Drápy",
+          roots: false,
+          frames: [70, 80, 80, 90], // nápřah, sek, sek, návrat
+          hitFrame: 2,
+          cooldown: 400,
+          damage: 1,
+          shape: "cone",
+          range: 32,
+          minDot: -1, // dokola (360°)
+        },
+        // Ohnivý dech – kužel ohně před drakem, drak při něm stojí
+        fire_breath: {
+          slot: "q",
+          label: "Ohnivý dech",
+          frames: [150, 300, 200], // nádech, oheň, doznění
+          hitFrame: 1,
+          cooldown: 6000,
+          damage: 2,
+          shape: "cone",
+          range: 42, // zhruba tak daleko, jak sahá nakreslený oheň
+          minDot: 0.6, // ≈ ±53° před drakem
+        },
+      },
+    },
   };
   // seznam tříd (všechno, co má "id"), v pořadí, v jakém jsou výše
   defs.ids = Object.values(defs).filter((v) => v && typeof v === "object" && v.id).map((v) => v.id);
