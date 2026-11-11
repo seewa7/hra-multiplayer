@@ -56,34 +56,26 @@ Obecná pravidla (větve, PR, revize) jsou v `AGENTS.md`, tady jsou jen pravidla
 - Stavy nepřátel (označení, omráčení, zpomalení) používej ze stávajících polí a funkcí
   (`markEnemy`, `stunUntil`, `slowUntil`), ať se chovají stejně u všech tříd.
 
-## Kde všude je potřeba sáhnout (aktuální stav kódu)
+## Jak přidat třídu (kód je obecný, žádné „if Fotograf“)
 
-Třída Fotograf je zatím v kódu na několika místech zadrátovaná natvrdo. Až bude třetí třída, **první, kdo ji přidává,
-má nejdřív v samostatném PR (`refactor/tridy-obecne`) tyto místa zobecnit**, aby další třídy už byly jen o definici.
-Do té doby je potřeba upravit:
+Server i klient si třídy najdou samy podle `public/shared/classes.js`. Nová třída = tyhle kroky:
 
-**Sdílené**
-- `public/shared/classes.js` – nová třída: `id`, `name`, `description`, `abilities` (slot `attack` / `q` / `e`,
-  `frames`, `hitFrame`, `cooldown`, `damage`, dosahy…).
+1. **`public/shared/classes.js`** – nová položka s `id`, `name`, `description` a `abilities`. Každá schopnost má
+   `slot` (`attack` = Mezerník / klik, `q`, `e`), `label`, `frames` (ms na snímek), `hitFrame`, `cooldown`, `damage`,
+   `roots` (stojí postava při animaci?) a tvar zásahu `shape`: `"cone"` (`range` + `minDot`, `minDot: -1` = dokola 360°)
+   nebo `"beam"` (`length` + `halfWidth`). Efekty: `marks` (označí), `stunMs` / `slowMs` / `slowFactor`.
+   Třída bez schopnosti na slotu `attack` musí mít objekt `attack` jako Hrdina (úder bez animace).
+2. **Sprity** – atlas do `public/assets/<id>/atlas.json` + PNG, zdroje do `assets-src/<id>/`. Formát:
+   `sheets.walk` a jeden sheet pro každou schopnost (stejný název jako v `abilities`); řádky = směry dolů, vlevo,
+   vpravo, nahoru; `cellW`, `cellH`, `anchorX`, `anchorY` (střed chodidel – stejný ve všech snímcích, takže postava
+   neposkakuje); volitelně `counts` (počet snímků v řádku) a `scale` (měřítko jen pro ten sheet). Kreslí se
+   **nearest-neighbor**. Postava má být ve hře zhruba 20 px vysoká. Vzor nástroje: `tools/build_photographer_atlas.py`.
+3. **`public/game.js`** – řádek v `CLASS_VIEW` (`sprites: true`, `scale`, výška jména `labelY`, kruh štítu `ringY` / `ringR`).
+4. **`public/index.html`** – karta v `#classes` (`value` = `id`) s náhledem `<canvas id="thumb-<id>">`.
 
-**Server (`server.js`)**
-- `join` – ověření platné třídy (dnes `msg.cls === "photographer" ? … : "hero"`); přidej svoje `id`.
-- Handler `attack` – větev podle třídy (základní útok); handler `ability` je dnes jen pro Fotografa.
-- `startAbility` je obecné (čte `CLASSES[p.cls].abilities`), ale **`resolveAction` má větve podle jména schopnosti** –
-  pro novou schopnost přidej větev a zranění vždy přes `hurtEnemy` (pravidlo 1).
-- `state` – pole `cd` (cooldowny pro HUD) se dnes posílá jen Fotografovi.
-
-**Klient (`public/game.js`, `public/index.html`)**
-- Výběr třídy: karta v `#classes` v `index.html` + náhled `thumb-<id>`.
-- Vykreslení postavy: dnes větev `p.cls === "photographer"` (sprity + animace podle `anim`, `animDir`, `animElapsed`).
-- HUD: nápověda a cooldowny třídy; posun jména nad hlavou a výška kruhu štítu podle velikosti postavy.
-
-**Sprity**
-- Postava se kreslí **nearest-neighbor** (žádné vyhlazování), kotva je u **chodidel** a je ve všech snímcích na
-  stejném místě (postava při změně animace neposkočí). Zdroje do `assets-src/<id>/`, hotové atlasy do
-  `public/assets/<id>/`; nástroj `tools/build_photographer_atlas.py` je zatím jen pro Fotografa – zobecni ho nebo si
-  udělej obdobný. Velikost ve hře nastavuje konstanta měřítka (viz `PHOTO_SCALE`), postava má mít zhruba
-  výšku Fotografa (~20 px na mapě).
+Server (`abilityForSlot`, `startAbility`, `resolveAction`, cooldowny ve `state`), HUD (ovládání a cooldowny) i
+vykreslení animací fungují pro novou třídu bez dalších úprav. Když schopnost potřebuje něco, co tvary a efekty výš
+neumí (projektil, past…), přidej to obecně do `resolveAction` (zranění vždy přes `hurtEnemy`) a popiš v PR.
 
 ## Co před PR musí být ověřené (napiš do popisu PR)
 
