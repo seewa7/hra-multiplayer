@@ -26,6 +26,7 @@ const bossFx = new Map(); // id -> efekt bosse (projektily, varování, zóny)
 const players = new Map(); // id -> { ...data ze serveru, rx, ry (pozice pro kreslení) }
 const enemies = new Map(); // id -> { ...data ze serveru, rx, ry }
 const items = new Map(); // id -> { id, type, x, y }
+let pebbles = []; // kamínky na mapě [{ id, x, y }]
 
 // ---------- Připojení k serveru ----------
 // Připojíme se na stejnou adresu, ze které se stránka načetla.
@@ -42,6 +43,7 @@ ws.onmessage = (e) => {
 
   if (msg.type === "welcome") {
     myId = msg.id;
+    if (msg.pebbles) pebbles = msg.pebbles;
   }
 
   if (msg.type === "state") {
@@ -444,6 +446,35 @@ function drawAttackSlash(ctx, x, y, radius = CLASSES.hero.attack.range - 6, alph
   ctx.ellipse(x, cy, r, r * 0.85, 0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
+}
+
+// ---------- Kamínky (překážka s 10% šancí na uklouznutí) ----------
+function drawPebble(ctx, x, y) {
+  // stín pod kamínky
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.fillRect(x - 5, y + 1, 10, 2);
+
+  // hlavní kamínek (střed)
+  ctx.fillStyle = "#4a5568";
+  ctx.fillRect(x - 4, y - 3, 7, 5);
+  ctx.fillStyle = "#718096";
+  ctx.fillRect(x - 3, y - 2, 5, 3);
+  ctx.fillStyle = "#cbd5e0";
+  ctx.fillRect(x - 2, y - 3, 3, 1);
+
+  // menší kamínek vedle vpravo
+  ctx.fillStyle = "#2d3748";
+  ctx.fillRect(x + 2, y - 1, 4, 3);
+  ctx.fillStyle = "#a0aec0";
+  ctx.fillRect(x + 2, y - 1, 3, 2);
+  ctx.fillStyle = "#e2e8f0";
+  ctx.fillRect(x + 3, y - 1, 1, 1);
+
+  // třetí drobný kamínek vlevo
+  ctx.fillStyle = "#4a5568";
+  ctx.fillRect(x - 5, y, 2, 2);
+  ctx.fillStyle = "#a0aec0";
+  ctx.fillRect(x - 5, y, 1, 1);
 }
 
 // ---------- Předměty na zemi (Loot - pixel art) ----------
@@ -867,6 +898,11 @@ function frame(now) {
   ctx.fillRect(-4, -4, MAP_W * TILE + 8, MAP_H * TILE + 8);
   ctx.drawImage(mapCanvas, 0, 0);
 
+  // Kamínky na zemi (pod postavami i monstry)
+  for (const peb of pebbles) {
+    drawPebble(ctx, Math.round(peb.x), Math.round(peb.y));
+  }
+
   // Vykreslení entit – seřazení podle y (depth sorting)
   const renderables = [
     ...[...players.values()].filter((p) => !p.dead).map((p) => ({ type: "player", obj: p, y: p.ry })),
@@ -896,11 +932,21 @@ function frame(now) {
       if (p.invulnerable && Math.floor(now / 100) % 2 === 0) {
         ctx.globalAlpha = 0.4;
       }
+      // animace uklouznutí na kamínku
+      if (p.slipped) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.sin(now / 40) * 0.25);
+        ctx.translate(-x, -y);
+      }
       if (p.cls === "photographer" && photo.ready) {
         drawPhotographer(ctx, p, x, y, now);
         drawSnapshotRing(ctx, p, x, y, now);
       } else {
         ctx.drawImage(getSprite(p.color, p.dir, p.moving ? walk : 0), x - 5, y - 14);
+      }
+      if (p.slipped) {
+        ctx.restore();
       }
       ctx.globalAlpha = 1.0;
 
@@ -995,6 +1041,15 @@ function frame(now) {
     ctx.strokeText(label, sx, sy);
     ctx.fillStyle = p.id === myId ? "#ffeb3b" : "#fff";
     ctx.fillText(label, sx, sy);
+
+    if (p.slipped) {
+      ctx.font = "bold 11px monospace";
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.fillStyle = "#ff4757";
+      ctx.strokeText("⚠️ Uklouzl! -1 ❤️", sx, sy - 14);
+      ctx.fillText("⚠️ Uklouzl! -1 ❤️", sx, sy - 14);
+      ctx.font = "bold 13px monospace";
+    }
   }
 
   // Štítky nepřátel
@@ -1033,9 +1088,9 @@ function frame(now) {
         const cd = (name) => (me.cd && me.cd[name] > 0 ? (me.cd[name] / 1000).toFixed(1) + " s" : "připraveno");
         hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] ${ab.snapshot.label}\n`;
         hudText += `[Q] ${ab.strong_flash.label}: ${cd("strong_flash")}   [E] ${ab.perfect_shot.label}: ${cd("perfect_shot")}\n`;
-        hudText += `🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)\n\n`;
+        hudText += `🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)  🪨 Kamínky (10% na uklouznutí)\n\n`;
       } else {
-        hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok  |  🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)\n\n`;
+        hudText += `[WASD / Šipky] Pohyb   [Mezerník / Klik] Útok  |  🪙 Mince (+1 bod)  ❤️ Srdce (+1 HP)  🪨 Kamínky (10% na uklouznutí)\n\n`;
       }
     }
     hudText += `Žebříček:\n`;

@@ -34,6 +34,27 @@ const ENEMY_DROP_CHANCE = 0.7; // šance, že poražený nepřítel upustí pře
 const COIN_CHANCE_DROP = 0.65; // z dropu je tolik procent mince, zbytek srdce
 const COIN_CHANCE_RANDOM = 0.7; // totéž pro předměty náhodně na louce
 
+// 16 malých kamínků rozmístěných po mapě.
+// Při přechodu přes kamínek má hráč 10% šanci, že uklouzne a ztratí 1 srdce.
+const PEBBLES = [
+  { id: 1,  x: 80,  y: 90 },
+  { id: 2,  x: 220, y: 70 },
+  { id: 3,  x: 150, y: 180 },
+  { id: 4,  x: 300, y: 160 },
+  { id: 5,  x: 520, y: 80 },
+  { id: 6,  x: 680, y: 100 },
+  { id: 7,  x: 480, y: 190 },
+  { id: 8,  x: 650, y: 200 },
+  { id: 9,  x: 100, y: 360 },
+  { id: 10, x: 260, y: 340 },
+  { id: 11, x: 140, y: 460 },
+  { id: 12, x: 320, y: 470 },
+  { id: 13, x: 500, y: 350 },
+  { id: 14, x: 690, y: 370 },
+  { id: 15, x: 550, y: 480 },
+  { id: 16, x: 710, y: 460 },
+];
+
 // ---------- 1) Obyčejný webový server pro soubory hry ----------
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -746,6 +767,8 @@ function killPlayer(p, now) {
 
 function respawnPlayer(p, now) {
   p.hp = p.maxHp;
+  p.slippedUntil = 0;
+  if (p.steppedPebbles) p.steppedPebbles.clear();
   p.x = (MAP_W * TILE) / 2 + (Math.random() - 0.5) * 50;
   p.y = (MAP_H * TILE) / 2 + (Math.random() - 0.5) * 50;
   p.invulnerableUntil = now + DIFFICULTY.joinProtectionMs;
@@ -802,6 +825,8 @@ function resetRun(now) {
       cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
       respawnAt: 0,
       soloRespawnsUsed: 0,
+      slippedUntil: 0,
+      steppedPebbles: new Set(),
     });
   }
 
@@ -867,10 +892,12 @@ wss.on("connection", (ws) => {
         action: null, // běžící schopnost třídy (Fotograf)
         actionSeq: 0,
         cooldowns: { snapshot: 0, strong_flash: 0, perfect_shot: 0 },
+        slippedUntil: 0,
+        steppedPebbles: new Set(),
       };
       if (players.size === 0) runStart = Date.now(); // hra se počítá od vstupu prvního hráče
       players.set(id, player);
-      send(ws, { type: "welcome", id });
+      send(ws, { type: "welcome", id, pebbles: PEBBLES });
       console.log(`+ ${name} se připojil (${players.size} hráčů)`);
     }
 
@@ -958,10 +985,11 @@ function broadcastState(now) {
       survivedMs: gameOver.survivedMs,
       results: gameOver.results,
     },
-    players: [...players.values()].map(({ input, action, cooldowns, actionSeq, shieldAt, regenAt, respawnAt, ...rest }) => {
+    players: [...players.values()].map(({ input, action, cooldowns, actionSeq, shieldAt, regenAt, respawnAt, steppedPebbles, ...rest }) => {
       const busy = action && now < action.endAt;
       return {
         ...rest,
+        slipped: now < rest.slippedUntil,
         xpNext: BUFFS.xpForNext(rest.level),
         dead: rest.hp <= 0,
         // za jak dlouho se mrtvý hráč oživí (null = nikdy, hra pro něj končí)
@@ -1148,6 +1176,26 @@ setInterval(() => {
     else if (dx > 0) p.dir = "right";
     else if (dy < 0) p.dir = "up";
     else if (dy > 0) p.dir = "down";
+
+    // Kamínky – detekce šlápnutí při chůzi (10% šance na uklouznutí a ztrátu 1 srdce)
+    if (p.hp > 0 && p.moving) {
+      if (!p.steppedPebbles) p.steppedPebbles = new Set();
+      for (const pebble of PEBBLES) {
+        const pDist = Math.hypot(p.x - pebble.x, p.y - pebble.y);
+        if (pDist < 10) {
+          if (!p.steppedPebbles.has(pebble.id)) {
+            p.steppedPebbles.add(pebble.id);
+            if (Math.random() < 0.10 && hurtPlayer(p, 1, now, pebble, { knockback: 10, invulMs: 1200 })) {
+              // animace a hláška jen když hráč srdce opravdu ztratil (ne v god mode nebo při nezranitelnosti)
+              p.slippedUntil = now + 800;
+              console.log(`  ⚠ ${p.name} uklouzl na kamínku #${pebble.id} a ztratil srdce!`);
+            }
+          }
+        } else if (pDist > 16) {
+          p.steppedPebbles.delete(pebble.id);
+        }
+      }
+    }
   }
 
   // 3a2) Boss Adam: spawn, fáze, útoky, projektily a zóny
