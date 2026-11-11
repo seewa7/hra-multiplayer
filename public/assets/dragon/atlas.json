@@ -20,20 +20,20 @@
       "file": "claw.png",
       "cols": 4,
       "rows": 4,
-      "cellW": 188,
-      "cellH": 190,
-      "anchorX": 94,
-      "anchorY": 158,
+      "cellW": 186,
+      "cellH": 188,
+      "anchorX": 93,
+      "anchorY": 157,
       "scale": 0.202
     },
     "fire_breath": {
       "file": "fire_breath.png",
       "cols": 3,
       "rows": 4,
-      "cellW": 260,
-      "cellH": 282,
-      "anchorX": 130,
-      "anchorY": 206,
+      "cellW": 258,
+      "cellH": 280,
+      "anchorX": 129,
+      "anchorY": 205,
       "scale": 0.202
     }
   }

@@ -46,18 +46,27 @@ BREATH = [  # attack.jpg, ohnivý dech: nádech, oheň, doznění
 ]
 
 
-def load_rgba(path):
-    """JPEG -> RGBA: bílé pozadí spojené s okrajem obrázku je průhledné."""
+def load_rgba(path, hole_min=None):
+    """JPEG -> RGBA: bílé pozadí je průhledné.
+
+    hole_min: uzavřené bílé "díry" (pozadí mezi rohem, hlavou a křídlem) od téhle plochy výš jsou taky pozadí.
+    Menší bílé plochy (oči, odlesky) zůstanou. Pro obrázek chůze se nepoužívá, oči tam mají stejnou plochu jako díry.
+    """
     a = np.array(Image.open(path).convert("RGB")).astype(int)
     mn, mx = a.min(-1), a.max(-1)
     light = (mn > 215) & ((mx - mn) < 30)
-    lab, _ = ndimage.label(light)
+    lab, n = ndimage.label(light)
     border = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))) - {0}
     bg = np.isin(lab, list(border))
-    # světlý okraj kolem obrysu (JPEG šum) taky pryč
-    fringe = (mn > 185) & ((mx - mn) < 45)
-    for _ in range(2):
-        bg |= ndimage.binary_dilation(bg) & fringe
+    if hole_min:
+        sizes = ndimage.sum(np.ones_like(lab), lab, range(1, n + 1))
+        holes = [i + 1 for i, size in enumerate(sizes) if size >= hole_min]
+        bg |= np.isin(lab, holes)
+    # světlý lem kolem obrysu, ohně a seků (JPEG šum, dozvuk efektu do bílé): okrajové světlé pixely pryč,
+    # několikrát po sobě; tmavý obrys a sytý oheň zůstanou
+    edge_light = mn > 150
+    for _ in range(4):
+        bg |= ndimage.binary_dilation(bg) & edge_light
     rgba = np.zeros(a.shape[:2] + (4,), np.uint8)
     rgba[..., :3] = a
     rgba[..., 3] = np.where(bg, 0, 255)
@@ -127,7 +136,7 @@ def build(name, rgba, lab, rows):
 def main():
     os.makedirs(OUT, exist_ok=True)
     walk = load_rgba(os.path.join(SRC, "walk.jpg"))
-    attack = load_rgba(os.path.join(SRC, "attack.jpg"))
+    attack = load_rgba(os.path.join(SRC, "attack.jpg"), hole_min=30)
     wl, al = components(walk)[0], components(attack)[0]
     sheets = {
         "walk": build("walk", walk, wl, WALK),
